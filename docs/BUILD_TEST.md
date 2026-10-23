@@ -32,6 +32,14 @@ $env:ROCKET_SNAPSHOT_DIR = 'C:\path\to\snap'; go test ./internal/desktop -run Te
 
 Интерактивный тест окна: `$env:ROCKET_GUI_SMOKE='1'; go test ./internal/desktop -run TestInteractive -v` (закрой реальное окно Rocket заранее).
 
+### Версия, релиз и GitHub Actions
+
+- `VERSION` — единственный источник версии (Go: `-ldflags "-X main.version=..."`, Android: `app/build.gradle.kts` читает файл). `scripts/check-release.ps1 [vX.Y.Z]` проверяет формат версии, первую строку `RELEASE_NOTES.md` и тег.
+- `scripts/build.ps1 [-SkipTests] [-SkipAndroid] [-Offline]` собирает всё как CI: gofmt, vet, `go test -race`, `dist/Rocket-<версия>-win-x64.exe`, `dist/Rocket-<версия>-android.apk` (release; без секретов подписан отладочным ключом) и `dist/SHA256SUMS.txt`.
+- `.github/workflows/build.yml` — единственный workflow: `meta` (проверка метаданных и решение о публикации), `windows` (gofmt, vet, race-тесты, exe, проверка вывода `rocket.exe version`), `android` (JDK 21, SDK раннера с принятыми лицензиями, подпись из секретов, `assembleDebug assembleRelease`), `release` (только слияние в `main` с ещё не выпущенной версией: контрольные суммы и `gh release create` с `RELEASE_NOTES.md` и `--generate-notes`). Смоук-скрипт `android/tests/run-smoke.ps1` в CI не запускается (он завязан на офлайн-кэш Gradle на машине разработки).
+- Экшен `android-actions/setup-android` на текущем образе раннера падает («Failed to find package 'tools'»); он не нужен, SDK уже есть на раннере. Не возвращать его.
+- Проверено на GitHub: прогон на PR (все три джоба зелёные, `release` пропущен) и прогон на `main` после слияния (опубликован релиз `v0.2.0` с exe, apk и `SHA256SUMS.txt`; суммы сошлись, версия внутри файлов 0.2.0). Править workflow лучше через PR: после правок разобрать YAML (`python -c "import yaml; yaml.safe_load(open('.github/workflows/build.yml', encoding='utf-8'))"`) и прогнать `scripts/build.ps1`.
+
 ### Иконка, ресурсы EXE и ассеты
 
 - Источник — `assets/icon-source.png` (1024×1024, PNG из `icon.webp` пользователя). `go run ./tools/genassets` (из корня) создаёт `internal/desktop/assets/rocket.png`, `android/.../drawable-nodpi/{rocket,ic_launcher_foreground,ic_launcher_monochrome}.png`, `assets/icon-circle.png` и `cmd/rocket/rocket.ico`. Он же печатает координаты носа и пламени; они продублированы константами в `scene_windows.go` и `LaunchView.kt`.

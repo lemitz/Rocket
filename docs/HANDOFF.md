@@ -30,7 +30,11 @@ Rocket — **одна функция: отправить выбранные на
 
 ```text
 Rocket/
-  AGENTS.md  README.md  go.mod  .gitignore
+  AGENTS.md  README.md  README.ru.md  RELEASE_NOTES.md  VERSION  LICENSE  SECURITY.md  THIRD-PARTY-NOTICES.md
+  go.mod  .gitignore  .gitattributes
+  .github/                   workflows/build.yml (сборка и автоматический релиз), шаблоны issue и PR, dependabot
+  scripts/                   build.ps1, check-release.ps1, make-keystore.ps1
+  docs/images/               скриншоты для README
   assets/                    icon-source.png (иконка пользователя), icon-circle.png (с прозрачными углами)
   tools/genassets/           go run ./tools/genassets: вырезает ракету, пишет PNG и ICO (только stdlib)
   cmd/rocket/                main.go (GUI/daemon/CLI, firewall), rocket.ico, rocket.rc, rocket.manifest,
