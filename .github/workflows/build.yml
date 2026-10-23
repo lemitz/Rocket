@@ -99,7 +99,7 @@ jobs:
           Write-Host $out
           if ($out -ne "rocket $version") { throw "Unexpected version output: '$out'" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: dist/*
@@ -155,7 +155,7 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk "dist/Rocket-$version-android.apk"
           ls -l dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android
           path: dist/*
