@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"rocket/internal/desktop"
 	"rocket/internal/outbox"
 	"rocket/internal/server"
 	"rocket/internal/wire"
@@ -111,5 +112,73 @@ func TestPcChosenFilesReachOnlyChosenPhone(t *testing.T) {
 	}
 	if r := poll(phoneOne, deviceOne, "First phone"); len(r.Offers) != 0 {
 		t.Fatalf("offer repeated after confirmation: %+v", r)
+	}
+}
+
+// The PC only reports a finished flight after the phone confirmed the file; bytes that
+// were merely sent are not a delivery.
+func TestOutgoingStatsWaitForPhoneConfirmation(t *testing.T) {
+	for _, confirm := range []bool{true, false} {
+		t.Run(fmt.Sprintf("confirm=%v", confirm), func(t *testing.T) {
+			src := t.TempDir()
+			data := bytes.Repeat([]byte("rocket"), 500)
+			path := filepath.Join(src, "stats.bin")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			out := outbox.New()
+			events := make(chan desktop.Event, 64)
+			ln, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			go func() {
+				_ = (server.Server{Dir: t.TempDir(), Outbox: out, OnEvent: func(e desktop.Event) { events <- e }}).Serve(ln)
+			}()
+			conn := connect(t, ln.Addr().(*net.TCPAddr).Port)
+			defer conn.Close()
+			exchange(t, conn, wire.Request{Cmd: "poll", Device: deviceOne, DeviceName: "Phone"})
+			if _, err := out.Queue(deviceOne, []string{path}); err != nil {
+				t.Fatal(err)
+			}
+			offers := exchange(t, conn, wire.Request{Cmd: "poll", Device: deviceOne, DeviceName: "Phone"}).Offers
+			if len(offers) != 1 {
+				t.Fatalf("offers: %+v", offers)
+			}
+			resp := exchange(t, conn, wire.Request{Cmd: "offer-get", ID: offers[0].ID, Device: deviceOne})
+			got := make([]byte, resp.Size)
+			if _, err := io.ReadFull(conn, got); err != nil {
+				t.Fatal(err)
+			}
+			var trailer wire.Trailer
+			if err := wire.Read(conn, &trailer); err != nil {
+				t.Fatal(err)
+			}
+			if confirm {
+				if r := exchange(t, conn, wire.Request{Cmd: "offer-done", ID: offers[0].ID, Device: deviceOne}); !r.OK {
+					t.Fatalf("offer-done: %+v", r)
+				}
+			}
+			conn.Close()
+			want := "error"
+			if confirm {
+				want = "complete"
+			}
+			deadline := time.After(3 * time.Second)
+			for {
+				select {
+				case e := <-events:
+					if e.Kind == "complete" || e.Kind == "error" {
+						if e.Kind != want || e.Direction != "outgoing" || confirm && e.Files != 1 {
+							t.Fatalf("final event %+v, want %s", e, want)
+						}
+						return
+					}
+				case <-deadline:
+					t.Fatalf("no final %s event", want)
+				}
+			}
+		})
 	}
 }

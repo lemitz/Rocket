@@ -30,13 +30,22 @@ type Options struct {
 	Name         string
 	ID           string
 	Addresses    []string
+	UDPOnline    bool // UDP discovery responder is listening
 	Folder       func() string
 	ChangeFolder func(path string) error
-	// Phones is queried on demand when the phone selector is pressed.
+	// Phones lists phones that polled recently. It is cheap and called about once a second.
 	Phones func() []Phone
+	// LastPhone / RememberPhone persist the phone chosen last (empty when none).
+	LastPhone     func() string
+	RememberPhone func(id string)
 	// Queue receives local paths from the picker. The handler must revalidate
 	// each path as a regular file before queuing; its return value is UI status.
 	Queue func(phoneID string, paths []string) (string, error)
+	// Unqueue drops everything still waiting for a phone (launch failed or timed out).
+	Unqueue func(phoneID string)
+	// FirewallOK reports whether Rocket's inbound rules exist; FixFirewall installs them elevated.
+	FirewallOK  func() bool
+	FixFirewall func() error
 }
 
 func byteSize(n int64) string {

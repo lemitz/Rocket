@@ -1,0 +1,5 @@
+// Windows resources for rocket.exe. Regenerate the linked object after changing the
+// icon or manifest (see docs/BUILD_TEST.md):
+//   windres --target=pe-x86-64 -O coff -i rocket.rc -o rocket_windows_amd64.syso
+1 ICON "rocket.ico"
+1 24 "rocket.manifest"

@@ -11,8 +11,10 @@ import (
 )
 
 // Vtable offsets and structures follow the Windows SDK d2d1.h interfaces
-// ID2D1Factory, ID2D1RenderTarget, ID2D1HwndRenderTarget and ID2D1Bitmap.
-// All resources belong to the locked UI thread. GDI never draws on the HWND.
+// ID2D1Factory, ID2D1RenderTarget, ID2D1HwndRenderTarget and ID2D1Bitmap
+// (verified against d2d1.h: CreateBitmap 4, DrawBitmap 26, BeginDraw 48, EndDraw 49,
+// CheckWindowState 57, Resize 58). All resources belong to the locked UI thread.
+// The CPU renderer fills a BGRA buffer; Direct2D only uploads and presents it.
 var (
 	d2d1             = syscall.NewLazyDLL("d2d1.dll")
 	d2dCreateFactory = d2d1.NewProc("D2D1CreateFactory")
@@ -53,10 +55,9 @@ type dibInfo struct {
 }
 
 type presenter struct {
-	factory, target, bitmap    uintptr
-	dc, dib, oldBitmap, pixels uintptr
-	width, height              int
-	recreateCount              int
+	factory, target, bitmap uintptr
+	width, height           int
+	recreateCount           int
 }
 
 func nativePointer(address uintptr) uintptr {
@@ -100,16 +101,6 @@ func (p *presenter) init() error {
 func (p *presenter) releaseSurface() {
 	comRelease(p.bitmap)
 	p.bitmap = 0
-	if p.dc != 0 {
-		selectObject.Call(p.dc, p.oldBitmap)
-		deleteDC.Call(p.dc)
-		p.dc, p.oldBitmap = 0, 0
-	}
-	if p.dib != 0 {
-		deleteObject.Call(p.dib)
-		p.dib = 0
-	}
-	p.pixels = 0
 	p.width, p.height = 0, 0
 }
 func (p *presenter) close() {
@@ -135,36 +126,17 @@ func (p *presenter) size(hwnd uintptr, width, height int) error {
 	p.releaseSurface()
 	if p.target != 0 {
 		size := d2dSize{uint32(width), uint32(height)}
-		if err := hresult("resize render target", comCall(p.target, 56, uintptr(unsafe.Pointer(&size)))); err != nil {
+		if err := hresult("resize render target", comCall(p.target, 58, uintptr(unsafe.Pointer(&size)))); err != nil {
 			p.discardTarget() // Resize can leave the target in a zombie state.
 		}
 	}
 	if p.target == 0 {
-		props := d2dTargetProperties{dpiX: 96, dpiY: 96} // pixel-perfect DIP coordinates
+		props := d2dTargetProperties{dpiX: 96, dpiY: 96} // pixel-perfect coordinates
 		hwndProps := d2dHwndProperties{hwnd: hwnd, size: d2dSize{uint32(width), uint32(height)}}
 		if err := hresult("create vsynced HWND render target", comCall(p.factory, 14,
 			uintptr(unsafe.Pointer(&props)), uintptr(unsafe.Pointer(&hwndProps)), uintptr(unsafe.Pointer(&p.target)))); err != nil {
 			return err
 		}
-	}
-	// Top-down 32bpp BGRA DIB. The alpha channel is ignored by the D2D bitmap;
-	// GDI writes RGB, and the entire canvas is repainted before every upload.
-	info := dibInfo{header: dibHeader{size: uint32(unsafe.Sizeof(dibHeader{})), width: int32(width), height: -int32(height), planes: 1, bitCount: 32}}
-	p.dib, _, _ = createDIBSection.Call(0, uintptr(unsafe.Pointer(&info)), 0, uintptr(unsafe.Pointer(&p.pixels)), 0, 0)
-	if p.dib == 0 || p.pixels == 0 {
-		p.releaseSurface()
-		return fmt.Errorf("Direct2D staging DIB creation failed")
-	}
-	p.dc, _, _ = createCompatibleDC.Call(0)
-	if p.dc == 0 {
-		p.releaseSurface()
-		return fmt.Errorf("Direct2D staging DC creation failed")
-	}
-	p.oldBitmap, _, _ = selectObject.Call(p.dc, p.dib)
-	if p.oldBitmap == 0 || p.oldBitmap == ^uintptr(0) {
-		p.oldBitmap = 0
-		p.releaseSurface()
-		return fmt.Errorf("Direct2D staging bitmap selection failed")
 	}
 	bitmapProps := d2dBitmapProperties{format: 87, alpha: 3, dpiX: 96, dpiY: 96} // DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE
 	if err := hresult("create bitmap", comCall(p.target, 4, uintptr(uint64(uint32(width))|uint64(uint32(height))<<32),
@@ -176,8 +148,8 @@ func (p *presenter) size(hwnd uintptr, width, height int) error {
 	return nil
 }
 
-// draw presents through Direct2D EndDraw, not GDI BitBlt or a timer. An
-// occluded window need not block at vsync; the event loop parks instead.
+// present uploads the finished frame and shows it through Direct2D EndDraw, not GDI
+// BitBlt or a timer. An occluded window need not block at vsync; the event loop parks.
 func (w *window) present() error {
 	if w.width <= 0 || w.height <= 0 {
 		return nil
@@ -186,9 +158,12 @@ func (w *window) present() error {
 	if err := p.size(w.hwnd, w.width, w.height); err != nil {
 		return err
 	}
-	w.draw(canvas{p.dc, p.width, p.height, p.width - 344, w.fonts})
-	if err := hresult("upload bitmap", comCall(p.bitmap, 10, 0, p.pixels, uintptr(p.width*4))); err != nil {
-		if uint32(comCall(p.target, 55))&1 != 0 {
+	w.draw(w.frameTime())
+	pix := w.fb.pix
+	hr := comCall(p.bitmap, 10, 0, uintptr(unsafe.Pointer(&pix[0])), uintptr(p.width*4))
+	runtime.KeepAlive(pix)
+	if err := hresult("upload bitmap", hr); err != nil {
+		if uint32(comCall(p.target, 57))&1 != 0 {
 			w.occluded = true
 		}
 		return err
@@ -197,8 +172,8 @@ func (w *window) present() error {
 	// DrawBitmap(bitmap, destinationRect, opacity, NEAREST_NEIGHBOR, sourceRect).
 	// Go's float arguments to SyscallN are raw IEEE-754 bits.
 	dest := d2dRect{right: float32(p.width), bottom: float32(p.height)}
-	comCall(p.target, 26, p.bitmap, uintptr(unsafe.Pointer(&dest)), uintptr(math.Float32bits(1)), 1, 0)
-	hr := comCall(p.target, 49, 0, 0) // EndDraw presents at display refresh with PRESENT_OPTIONS_NONE.
+	comCall(p.target, 26, p.bitmap, uintptr(unsafe.Pointer(&dest)), uintptr(math.Float32bits(1)), 0, 0)
+	hr = comCall(p.target, 49, 0, 0) // EndDraw presents at display refresh with PRESENT_OPTIONS_NONE.
 	if uint32(hr) == d2dRecreateTarget {
 		p.discardTarget()
 		p.recreateCount++
@@ -212,6 +187,6 @@ func (w *window) present() error {
 		return err
 	}
 	p.recreateCount = 0
-	w.occluded = uint32(comCall(p.target, 55))&1 != 0
+	w.occluded = uint32(comCall(p.target, 57))&1 != 0
 	return nil
 }

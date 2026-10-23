@@ -45,6 +45,20 @@ func TestQueuePollGetAck(t *testing.T) {
 	}
 }
 
+func TestDropForgetsWaitingFiles(t *testing.T) {
+	r := New()
+	path := filepath.Join(t.TempDir(), "drop.txt")
+	os.WriteFile(path, []byte("x"), 0600)
+	r.Touch(phoneID, "Phone")
+	if _, err := r.Queue(phoneID, []string{path}); err != nil {
+		t.Fatal(err)
+	}
+	r.Drop(phoneID)
+	if listed, _ := r.Touch(phoneID, "Phone"); len(listed) != 0 {
+		t.Fatalf("dropped offers still listed: %v", listed)
+	}
+}
+
 func TestChangedSourceAndInvalidIdentity(t *testing.T) {
 	r := New()
 	if _, err := r.Touch("not-an-id", "Phone"); err == nil {

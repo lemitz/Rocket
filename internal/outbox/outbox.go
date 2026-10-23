@@ -180,6 +180,13 @@ func (r *Registry) Done(device, id string) error {
 	return ErrNoOffer
 }
 
+// Drop forgets every file still waiting for the phone, e.g. after a failed or abandoned launch.
+func (r *Registry) Drop(device string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.items, device)
+}
+
 func (r *Registry) cleanupLocked() {
 	for id, entries := range r.items {
 		kept := entries[:0]

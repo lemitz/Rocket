@@ -55,6 +55,14 @@ func (s *sessionStats) fileComplete() {
 	s.emit("progress", "")
 }
 
+// confirm counts a file sent to a phone once that phone acknowledged it; an
+// acknowledgement for a file this session never started is not counted.
+func (s *sessionStats) confirm() {
+	if s.inFile {
+		s.fileComplete()
+	}
+}
+
 func (s *sessionStats) finish(err error) {
 	if !s.active {
 		return

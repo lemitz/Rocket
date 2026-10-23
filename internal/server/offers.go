@@ -49,19 +49,21 @@ func (s Server) offerGet(conn net.Conn, req wire.Request, stats *sessionStats) e
 	if n != info.Size() {
 		return io.ErrUnexpectedEOF
 	}
-	if err := wire.Write(conn, wire.Trailer{Hash: fmt.Sprintf("%08x", hash.Sum32())}); err != nil {
-		return err
-	}
-	stats.fileComplete()
-	return nil
+	// The file only counts as delivered once the phone confirms it with offer-done: sent
+	// bytes say nothing about the phone having verified and saved them.
+	return wire.Write(conn, wire.Trailer{Hash: fmt.Sprintf("%08x", hash.Sum32())})
 }
 
-func (s Server) offerDone(conn net.Conn, req wire.Request) error {
+func (s Server) offerDone(conn net.Conn, req wire.Request, stats *sessionStats) error {
 	if s.Outbox == nil {
 		return replyError(conn, fmt.Errorf("file is unavailable"))
 	}
 	if err := s.Outbox.Done(req.Device, req.ID); err != nil {
 		return replyError(conn, err)
 	}
-	return wire.Write(conn, wire.Response{OK: true})
+	if err := wire.Write(conn, wire.Response{OK: true}); err != nil {
+		return err
+	}
+	stats.confirm()
+	return nil
 }

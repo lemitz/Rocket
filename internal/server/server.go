@@ -88,7 +88,7 @@ func (s Server) Handle(conn net.Conn) {
 		case "offer-get":
 			err = s.offerGet(conn, req, &stats)
 		case "offer-done":
-			err = s.offerDone(conn, req)
+			err = s.offerDone(conn, req, &stats)
 		default:
 			_ = wire.Write(conn, wire.Response{Error: "unknown command"})
 			return

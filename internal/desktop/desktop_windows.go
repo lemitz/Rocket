@@ -4,8 +4,10 @@ package desktop
 
 import (
 	"fmt"
-	"math"
+	"image"
+	"os"
 	"runtime"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
@@ -20,6 +22,7 @@ var (
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 	ole32    = syscall.NewLazyDLL("ole32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
+	dwmapi   = syscall.NewLazyDLL("dwmapi.dll")
 
 	registerClass    = user32.NewProc("RegisterClassW")
 	createWindow     = user32.NewProc("CreateWindowExW")
@@ -33,40 +36,45 @@ var (
 	postQuitMessage  = user32.NewProc("PostQuitMessage")
 	postMessage      = user32.NewProc("PostMessageW")
 	loadCursor       = user32.NewProc("LoadCursorW")
+	setCursor        = user32.NewProc("SetCursor")
 	beginPaint       = user32.NewProc("BeginPaint")
 	endPaint         = user32.NewProc("EndPaint")
 	getClientRect    = user32.NewProc("GetClientRect")
+	getWindowRect    = user32.NewProc("GetWindowRect")
 	invalidateRect   = user32.NewProc("InvalidateRect")
 	drawText         = user32.NewProc("DrawTextW")
-	fillRect         = user32.NewProc("FillRect")
 	setCapture       = user32.NewProc("SetCapture")
 	releaseCapture   = user32.NewProc("ReleaseCapture")
 	sendMessage      = user32.NewProc("SendMessageW")
+	setTimer         = user32.NewProc("SetTimer")
+	killTimer        = user32.NewProc("KillTimer")
+	loadImage        = user32.NewProc("LoadImageW")
+	getSystemMetrics = user32.NewProc("GetSystemMetrics")
+	setWindowPos     = user32.NewProc("SetWindowPos")
+	getDpiForWindow  = user32.NewProc("GetDpiForWindow")
+	getDpiForSystem  = user32.NewProc("GetDpiForSystem")
+	adjustWindowRect = user32.NewProc("AdjustWindowRectExForDpi")
 
 	createCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
 	selectObject       = gdi32.NewProc("SelectObject")
 	deleteObject       = gdi32.NewProc("DeleteObject")
 	deleteDC           = gdi32.NewProc("DeleteDC")
-	getStockObject     = gdi32.NewProc("GetStockObject")
-	setDCBrushColor    = gdi32.NewProc("SetDCBrushColor")
-	setDCPenColor      = gdi32.NewProc("SetDCPenColor")
 	setTextColor       = gdi32.NewProc("SetTextColor")
 	setBkMode          = gdi32.NewProc("SetBkMode")
-	roundRect          = gdi32.NewProc("RoundRect")
-	ellipse            = gdi32.NewProc("Ellipse")
-	polygon            = gdi32.NewProc("Polygon")
-	moveToEx           = gdi32.NewProc("MoveToEx")
-	lineTo             = gdi32.NewProc("LineTo")
 	createFont         = gdi32.NewProc("CreateFontW")
 
 	browseForFolder   = shell32.NewProc("SHBrowseForFolderW")
 	getPathFromIDList = shell32.NewProc("SHGetPathFromIDListW")
 	shellExecute      = shell32.NewProc("ShellExecuteW")
+	dragAcceptFiles   = shell32.NewProc("DragAcceptFiles")
+	dragQueryFile     = shell32.NewProc("DragQueryFileW")
+	dragFinish        = shell32.NewProc("DragFinish")
 	coTaskMemFree     = ole32.NewProc("CoTaskMemFree")
 	coInitializeEx    = ole32.NewProc("CoInitializeEx")
 	coUninitialize    = ole32.NewProc("CoUninitialize")
 	getModuleHandle   = kernel32.NewProc("GetModuleHandleW")
 	moveMemory        = kernel32.NewProc("RtlMoveMemory")
+	dwmSetAttribute   = dwmapi.NewProc("DwmSetWindowAttribute")
 )
 
 const (
@@ -77,17 +85,24 @@ const (
 	wmEraseBkgnd    = 0x0014
 	wmGetMinMaxInfo = 0x0024
 	wmActivateApp   = 0x001c
+	wmSetCursor     = 0x0020
+	wmKeyDown       = 0x0100
+	wmTimer         = 0x0113
 	wmMouseMove     = 0x0200
 	wmLButtonDown   = 0x0201
 	wmLButtonUp     = 0x0202
+	wmMouseWheel    = 0x020a
+	wmDropFiles     = 0x0233
+	wmDpiChanged    = 0x02e0
 	wmNCCreate      = 0x0081
 	wmNCDestroy     = 0x0082
 	wmAppEvent      = 0x8001
 
 	wsOverlappedWindow = 0x00cf0000
 	cwUseDefault       = 0x80000000
-	dcBrush            = 18
-	dcPen              = 19
+
+	designWidth, designHeight = 440, 780 // client size in logical pixels at 100% scaling
+	minWidth, minHeight       = 340, 580
 )
 
 type point struct{ x, y int32 }
@@ -120,54 +135,90 @@ type browseInfo struct {
 	image                           int32
 }
 
-type phase uint8
+type screenKind uint8
 
 const (
-	idle phase = iota
-	transferring
-	departing
-	finished
-	failed
+	scMain screenKind = iota
+	scSettings
 )
 
 type notification struct {
 	kind   string
 	event  Event
 	folder string
-	phones []Phone
 	status string
+	ok     bool
 	err    error
 }
 
 type window struct {
-	hwnd                             uintptr
-	opts                             Options
-	done                             chan struct{}
-	mu                               sync.Mutex
-	queue                            []notification
-	queued                           bool
-	state                            phase
-	serverOnline                     bool
-	current                          Event
-	currentSession                   uint64
-	waiting                          map[uint64]Event
-	finishedQueue                    []Event
-	started, departure               time.Time
-	displayProgress                  float64
-	departY                          float64
-	folder, notice                   string
-	folderBusy                       bool
-	paths                            []string
-	phones                           []Phone
-	selectedPhone                    string
-	phonesBusy, sendBusy, queuedSend bool
-	hover, pressed                   int
-	width, height                    int
-	fonts                            [4]uintptr
-	presenter                        presenter
-	russian, focused, occluded       bool
-	lastFrame                        time.Time
-	drawErr                          error
+	hwnd uintptr
+	opts Options
+	done chan struct{}
+	mu   sync.Mutex
+
+	queue  []notification
+	wake   bool // a wake-up message is already posted (guarded by mu)
+	queued bool // an outgoing batch is waiting for the phone to fetch it
+
+	// transfer session
+	state           phase
+	serverOnline    bool
+	current         Event
+	currentSession  uint64
+	waiting         map[uint64]Event
+	finishedQueue   []Event
+	started         time.Time
+	displayProgress float64
+	failMsg         string
+	flightStart     time.Time
+	departAt        time.Time
+	failAt          time.Time
+	returnAt        time.Time
+	launchDeadline  time.Time
+
+	// selection and destination
+	paths         []string
+	sizes         []int64
+	phones        []Phone
+	selectedPhone string
+	sheetOpen     bool
+	toast         string
+	toastUntil    time.Time
+	flashAt       time.Time
+
+	// settings screen
+	screen     screenKind
+	setA       float64
+	setScroll  float32
+	folder     string
+	folderBusy bool
+	fwState    int
+	fwBusy     bool
+
+	// interaction and animation
+	sl               slider
+	selA             float64
+	hover, pressed   int
+	thrust, streak   float64
+	scroll           float64
+	spawnAcc         float64
+	parts            []particle
+	seed             uint32
+	lastTick         time.Time
+	animUntil        time.Time
+	clock            func() time.Time
+	width, height    int
+	scale            float64
+	sprite           *image.NRGBA
+	spriteBmp        *bitmap
+	spriteH          int
+	bg, fb           *surface
+	ts               *textRenderer
+	presenter        presenter
+	russian, focused bool
+	occluded         bool
+	drawErr          error
 }
 
 var (
@@ -180,8 +231,19 @@ var (
 	windowCallback = syscall.NewCallback(windowProc)
 )
 
-func wide(s string) *uint16   { return syscall.StringToUTF16Ptr(s) }
-func rgb(r, g, b int) uintptr { return uintptr(uint32(r) | uint32(g)<<8 | uint32(b)<<16) }
+func wide(s string) *uint16 { return syscall.StringToUTF16Ptr(s) }
+func (w *window) frameTime() time.Time {
+	if w.clock != nil {
+		return w.clock()
+	}
+	return time.Now()
+}
+
+func newWindow(opts Options) *window {
+	return &window{opts: opts, done: make(chan struct{}), serverOnline: true, hover: hNone, pressed: hNone,
+		focused: true, russian: preferredRussian(), seed: 2463534242, scale: 1,
+		sprite: loadRocket(), ts: newTextRenderer(), waiting: map[uint64]Event{}}
+}
 
 // Run creates the native window and blocks until it closes. The caller can
 // terminate its process after Run returns. Events are marshalled to the UI
@@ -193,7 +255,7 @@ func Run(events <-chan Event, opts Options) error {
 		instance, _, _ := getModuleHandle.Call(0)
 		cursor, _, _ := loadCursor.Call(0, 32512) // IDC_ARROW
 		name := wide("RocketDesktopWindow")
-		wc := wndClass{style: 0x0003, wndProc: windowCallback, instance: instance, cursor: cursor, className: uintptr(unsafe.Pointer(name))}
+		wc := wndClass{wndProc: windowCallback, instance: instance, cursor: cursor, className: uintptr(unsafe.Pointer(name))}
 		if result, _, err := registerClass.Call(uintptr(unsafe.Pointer(&wc))); result == 0 {
 			classErr = fmt.Errorf("register Rocket window: %w", err)
 		}
@@ -203,7 +265,8 @@ func Run(events <-chan Event, opts Options) error {
 		return classErr
 	}
 
-	w := &window{opts: opts, done: make(chan struct{}), serverOnline: true, hover: -1, pressed: -1, focused: true, russian: preferredRussian()}
+	w := newWindow(opts)
+	defer w.ts.close()
 	if err := w.presenter.init(); err != nil {
 		return err
 	}
@@ -212,10 +275,16 @@ func Run(events <-chan Event, opts Options) error {
 	}
 	instance, _, _ := getModuleHandle.Call(0)
 	className, title := wide("RocketDesktopWindow"), wide("Rocket")
+	dpi, _, _ := getDpiForSystem.Call()
+	if dpi == 0 {
+		dpi = 96
+	}
+	client := rect{0, 0, int32(designWidth * int(dpi) / 96), int32(designHeight * int(dpi) / 96)}
+	adjustWindowRect.Call(uintptr(unsafe.Pointer(&client)), wsOverlappedWindow, 0, 0, dpi)
 	creatingMu.Lock()
 	creating = w
 	hwnd, _, err := createWindow.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(title)),
-		wsOverlappedWindow, cwUseDefault, cwUseDefault, 990, 675, 0, 0, instance, 0)
+		wsOverlappedWindow, cwUseDefault, cwUseDefault, uintptr(client.right-client.left), uintptr(client.bottom-client.top), 0, 0, instance, 0)
 	runtime.KeepAlive(className)
 	runtime.KeepAlive(title)
 	creating = nil
@@ -225,7 +294,8 @@ func Run(events <-chan Event, opts Options) error {
 		return fmt.Errorf("create Rocket window: %w", err)
 	}
 	w.hwnd = hwnd
-	w.initFonts()
+	w.styleWindow(instance)
+	setTimer.Call(hwnd, 1, 1000, 0)
 	showWindow.Call(hwnd, 5) // SW_SHOW
 	updateWindow.Call(hwnd)
 	go func() {
@@ -257,8 +327,8 @@ func Run(events <-chan Event, opts Options) error {
 			translateMessage.Call(uintptr(unsafe.Pointer(&m)))
 			dispatchMessage.Call(uintptr(unsafe.Pointer(&m)))
 		}
-		if w.animate() {
-			w.tick()
+		if w.animate(time.Now()) {
+			w.tick(time.Now())
 			if err := w.present(); err != nil {
 				w.drawErr = err
 				destroyWindow.Call(hwnd)
@@ -271,6 +341,7 @@ func Run(events <-chan Event, opts Options) error {
 			}
 			continue
 		}
+		w.lastTick = time.Time{}
 		r, _, e := getMessage.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
 		if int32(r) == -1 {
 			destroyWindow.Call(hwnd)
@@ -284,9 +355,42 @@ func Run(events <-chan Event, opts Options) error {
 	}
 }
 
-func (w *window) animate() bool {
-	return w.focused && w.width > 0 && w.height > 0 && (w.state == transferring || w.state == departing)
+// styleWindow gives the window its icon, a dark title bar and file-drop support.
+func (w *window) styleWindow(instance uintptr) {
+	for _, spec := range []struct{ kind, metric uintptr }{{1, 11}, {0, 49}} { // ICON_BIG/SM_CXICON, ICON_SMALL/SM_CXSMICON
+		size, _, _ := getSystemMetrics.Call(spec.metric)
+		icon, _, _ := loadImage.Call(instance, 1, 1, size, size, 0) // resource 1, IMAGE_ICON
+		if icon != 0 {
+			sendMessage.Call(w.hwnd, 0x0080, spec.kind, icon) // WM_SETICON
+		}
+	}
+	on := uint32(1)
+	dwmSetAttribute.Call(w.hwnd, 20, uintptr(unsafe.Pointer(&on)), 4) // DWMWA_USE_IMMERSIVE_DARK_MODE
+	caption := uint32(0x1c1110)                                       // 0x00BBGGRR of the scene's top colour (Windows 11)
+	dwmSetAttribute.Call(w.hwnd, 35, uintptr(unsafe.Pointer(&caption)), 4)
+	border := uint32(0x2b1a1b)
+	dwmSetAttribute.Call(w.hwnd, 34, uintptr(unsafe.Pointer(&border)), 4)
+	dragAcceptFiles.Call(w.hwnd, 1)
+	dpi, _, _ := getDpiForWindow.Call(w.hwnd)
+	if dpi != 0 {
+		w.scale = float64(dpi) / 96
+	}
 }
+
+func (w *window) animate(now time.Time) bool {
+	if !w.focused || w.width <= 0 || w.height <= 0 {
+		return false
+	}
+	switch w.state {
+	case launching, flying, departing:
+		return true
+	}
+	return w.sl.drag || w.sl.springing || w.selA != w.selTarget() ||
+		w.setA != map[bool]float64{true: 1, false: 0}[w.screen == scSettings] ||
+		now.Before(w.animUntil) || len(w.parts) > 0 || w.thrust > .01 || w.streak > .01
+}
+
+func (w *window) invalidate() { invalidateRect.Call(w.hwnd, 0, 0) }
 
 func (w *window) enqueue(n notification) {
 	w.mu.Lock()
@@ -307,8 +411,8 @@ func (w *window) enqueue(n notification) {
 	} else {
 		w.queue = append(w.queue, n)
 	}
-	if !w.queued {
-		w.queued = true
+	if !w.wake {
+		w.wake = true
 		postMessage.Call(w.hwnd, wmAppEvent, 0, 0)
 	}
 	w.mu.Unlock()
@@ -340,20 +444,32 @@ func windowProc(hwnd uintptr, message uint32, wp, lp uintptr) uintptr {
 	case wmGetMinMaxInfo:
 		// MINMAXINFO.ptMinTrackSize is the fourth POINT (byte offset 24).
 		// Copy via Win32 so callback uintptrs are not reinterpreted as Go pointers.
-		minimum := point{800, 660}
+		var outer, inner rect
+		getWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&outer)))
+		getClientRect.Call(hwnd, uintptr(unsafe.Pointer(&inner)))
+		minimum := point{int32(float64(minWidth)*w.scale) + (outer.right - outer.left - inner.right),
+			int32(float64(minHeight)*w.scale) + (outer.bottom - outer.top - inner.bottom)}
 		moveMemory.Call(lp+24, uintptr(unsafe.Pointer(&minimum)), unsafe.Sizeof(minimum))
 		return 0
 	case wmEraseBkgnd:
 		return 1
 	case wmSize:
 		w.width, w.height = int(uint16(lp)), int(uint16(lp>>16))
-		invalidateRect.Call(hwnd, 0, 0)
+		w.setScroll = min(w.setScroll, w.maxSettingsScroll(w.layout()))
+		w.invalidate()
+		return 0
+	case wmDpiChanged:
+		w.scale = float64(uint16(wp>>16)) / 96
+		var suggested rect
+		moveMemory.Call(uintptr(unsafe.Pointer(&suggested)), lp, unsafe.Sizeof(suggested))
+		setWindowPos.Call(hwnd, 0, uintptr(suggested.left), uintptr(suggested.top),
+			uintptr(suggested.right-suggested.left), uintptr(suggested.bottom-suggested.top), 0x14) // NOZORDER|NOACTIVATE
 		return 0
 	case wmActivateApp:
 		w.focused = wp != 0
-		w.lastFrame = time.Time{}
+		w.lastTick = time.Time{}
 		if w.focused {
-			invalidateRect.Call(hwnd, 0, 0)
+			w.invalidate()
 		}
 		return 0
 	case wmPaint:
@@ -362,42 +478,77 @@ func windowProc(hwnd uintptr, message uint32, wp, lp uintptr) uintptr {
 	case wmAppEvent:
 		w.drain()
 		return 0
+	case wmTimer:
+		w.syncPhones()
+		if w.screen == scSettings {
+			w.invalidate()
+		}
+		return 0
+	case wmSetCursor:
+		if uint16(lp) == 1 && w.hover != hNone { // HTCLIENT over something clickable
+			hand, _, _ := loadCursor.Call(0, 32649) // IDC_HAND
+			setCursor.Call(hand)
+			return 1
+		}
 	case wmMouseMove:
-		x, y := int(int16(lp)), int(int16(lp>>16))
-		h := w.hit(x, y)
-		if h != w.hover {
+		x, y := f32(float64(int16(lp))), f32(float64(int16(lp>>16)))
+		if w.sl.drag {
+			l := w.layout()
+			w.sl.pos = clamp(float64((x-w.sl.grab-l.minX)/l.travel), 0, 1)
+			w.invalidate()
+			return 0
+		}
+		if h := w.hit(x, y); h != w.hover {
 			w.hover = h
-			invalidateRect.Call(hwnd, 0, 0)
+			w.invalidate()
 		}
 		return 0
 	case wmLButtonDown:
-		w.pressed = w.hit(int(int16(lp)), int(int16(lp>>16)))
+		x, y := f32(float64(int16(lp))), f32(float64(int16(lp>>16)))
+		w.pressed = w.hit(x, y)
 		if w.pressed >= 0 {
 			setCapture.Call(hwnd)
-			invalidateRect.Call(hwnd, 0, 0)
+			if w.pressed == hThumb {
+				w.sl.drag, w.sl.springing = true, false
+				w.sl.grab = x - w.layout().thumb.x
+			}
+			w.invalidate()
 		}
 		return 0
 	case wmLButtonUp:
 		releaseCapture.Call()
-		h := w.hit(int(int16(lp)), int(int16(lp>>16)))
+		x, y := f32(float64(int16(lp))), f32(float64(int16(lp>>16)))
 		pressed := w.pressed
-		w.pressed = -1
-		invalidateRect.Call(hwnd, 0, 0)
-		if h == pressed && h >= 0 {
+		w.pressed = hNone
+		if w.sl.drag {
+			w.releaseSlider()
+		} else if h := w.hit(x, y); h == pressed && h >= 0 {
 			w.click(h)
 		}
+		w.hover = w.hit(x, y)
+		w.invalidate()
+		return 0
+	case wmMouseWheel:
+		if w.screen == scSettings {
+			l := w.layout()
+			delta := float32(int16(wp>>16)) / 120
+			w.setScroll = clampF(w.setScroll-delta*54*l.u, 0, w.maxSettingsScroll(l))
+			w.invalidate()
+		}
+		return 0
+	case wmKeyDown:
+		w.key(wp)
+		return 0
+	case wmDropFiles:
+		w.drop(wp)
 		return 0
 	case wmClose:
 		destroyWindow.Call(hwnd)
 		return 0
 	case wmDestroy:
+		killTimer.Call(hwnd, 1)
 		close(w.done)
 		w.presenter.close()
-		for _, font := range w.fonts {
-			if font != 0 {
-				deleteObject.Call(font)
-			}
-		}
 		postQuitMessage.Call(0)
 		return 0
 	case wmNCDestroy:
@@ -409,11 +560,29 @@ func windowProc(hwnd uintptr, message uint32, wp, lp uintptr) uintptr {
 	return r
 }
 
+func clampF(v, lo, hi float32) float32 { return max(lo, min(hi, v)) }
+
+func (w *window) paint() {
+	var ps paintStruct
+	hdc, _, _ := beginPaint.Call(w.hwnd, uintptr(unsafe.Pointer(&ps)))
+	if hdc == 0 {
+		return
+	}
+	defer endPaint.Call(w.hwnd, uintptr(unsafe.Pointer(&ps)))
+	var bounds rect
+	getClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&bounds)))
+	w.width, w.height = int(bounds.right), int(bounds.bottom)
+	if err := w.present(); err != nil {
+		w.drawErr = err
+		postMessage.Call(w.hwnd, wmClose, 0, 0)
+	}
+}
+
 func (w *window) drain() {
 	w.mu.Lock()
 	q := w.queue
 	w.queue = nil
-	w.queued = false
+	w.wake = false
 	w.mu.Unlock()
 	for _, n := range q {
 		switch n.kind {
@@ -421,45 +590,19 @@ func (w *window) drain() {
 			w.onEvent(n.event)
 		case "offline":
 			w.serverOnline = false
-		case "phones":
-			w.phonesBusy = false
-			w.phones = nil
-			for _, phone := range n.phones {
-				if phone.ID != "" {
-					w.phones = append(w.phones, phone)
-				}
-			}
-			found := false
-			for _, phone := range w.phones {
-				if phone.ID == w.selectedPhone {
-					found = true
-				}
-			}
-			if !found {
-				w.selectedPhone = ""
-				w.queuedSend = false
-			}
-			if len(w.phones) == 0 {
-				w.notice = w.tr("Open Rocket on the target phone.")
-			} else {
-				w.choosePhone()
-			}
 		case "send":
-			w.sendBusy = false
 			if n.err != nil {
-				w.queuedSend = false
-				w.notice = fmt.Sprintf(w.tr("Could not queue files: %v"), n.err)
-			} else {
-				w.queuedSend = true
-				w.notice = n.status
-				if w.notice == "" {
-					w.notice = w.tr("Queued. Waiting for phone to connect.")
+				if w.state == launching {
+					w.fail(fmt.Sprintf(w.tr("Could not queue the files: %v"), n.err))
 				}
+			} else {
+				w.queued = true
+				w.launchDeadline = w.frameTime().Add(25 * time.Second)
 			}
 		case "folder":
 			w.folderBusy = false
 			if n.err != nil {
-				w.notice = w.tr("Could not change folder. Check access and try again.")
+				w.showToast(w.tr("Could not change the folder. Check access and try again."))
 			} else {
 				w.folder = n.folder
 				if w.opts.Folder != nil {
@@ -467,21 +610,64 @@ func (w *window) drain() {
 						w.folder = current
 					}
 				}
-				w.notice = w.tr("Folder updated for new transfers.")
+				w.showToast(w.tr("Folder changed"))
+			}
+		case "fw":
+			w.fwBusy = false
+			w.fwState = fwMissing
+			if n.ok {
+				w.fwState = fwPresent
 			}
 		}
 	}
-	invalidateRect.Call(w.hwnd, 0, 0)
+	w.invalidate()
+}
+
+func (w *window) showToast(text string) {
+	w.toast = text
+	w.toastUntil = w.frameTime().Add(3500 * time.Millisecond)
+	w.animUntil = w.toastUntil
+}
+
+// ---- transfer state --------------------------------------------------------
+
+func (w *window) beginFlight(e Event) {
+	now := w.frameTime()
+	w.currentSession = e.SessionID
+	w.current = e
+	if w.state != launching {
+		w.flightStart = now
+	}
+	w.state = flying
+	w.started = now
+	w.displayProgress = 0
+	w.screen = scMain
+	w.sheetOpen = false
+	w.sl.pos, w.sl.drag, w.sl.springing = 0, false, false
+	w.returnAt = time.Time{}
+	w.parts = w.parts[:0]
+}
+
+func (w *window) fail(message string) {
+	now := w.frameTime()
+	if w.state != flying && w.state != launching {
+		w.flightStart = now.Add(-1500 * time.Millisecond)
+	}
+	w.failMsg = message
+	w.failAt = now
+	w.state = resultFail
+	w.queued = false
+	w.sl.pos = 0
+	w.screen = scMain
+	w.sheetOpen = false
 }
 
 func (w *window) onEvent(e Event) {
+	now := w.frameTime()
 	// Several phones may transfer simultaneously. Show each flight in turn;
 	// never combine another TCP session's bytes with the visible statistics.
 	if e.SessionID != 0 && w.currentSession != 0 && e.SessionID != w.currentSession &&
-		(w.state == transferring || w.state == departing) {
-		if w.waiting == nil {
-			w.waiting = make(map[uint64]Event)
-		}
+		(w.state == flying || w.state == departing) {
 		if e.Kind == "complete" || e.Kind == "error" {
 			delete(w.waiting, e.SessionID)
 			w.finishedQueue = append(w.finishedQueue, e)
@@ -492,16 +678,10 @@ func (w *window) onEvent(e Event) {
 	}
 	switch e.Kind {
 	case "start":
-		w.currentSession = e.SessionID
-		w.current = e
-		w.state = transferring
-		w.started = time.Now()
-		w.displayProgress = 0
-		w.notice = ""
-		w.lastFrame = time.Time{}
+		w.beginFlight(e)
 	case "progress":
-		if w.state != transferring {
-			w.onEvent(Event{SessionID: e.SessionID, Kind: "start", Direction: e.Direction, Name: e.Name})
+		if w.state != flying {
+			w.beginFlight(Event{SessionID: e.SessionID, Kind: "start", Direction: e.Direction, Name: e.Name})
 		}
 		if e.Direction != "" {
 			w.current.Direction = e.Direction
@@ -512,10 +692,11 @@ func (w *window) onEvent(e Event) {
 		w.current.Bytes, w.current.Total, w.current.Files = e.Bytes, e.Total, e.Files
 	case "complete":
 		w.currentSession = e.SessionID
-		if w.state != transferring {
+		if w.state != flying && w.state != launching {
 			w.started = time.Time{}
-			w.displayProgress = 0
 			w.current = Event{}
+			w.flightStart = now.Add(-1500 * time.Millisecond)
+			w.screen = scMain
 		}
 		if e.Direction == "" {
 			e.Direction = w.current.Direction
@@ -533,147 +714,347 @@ func (w *window) onEvent(e Event) {
 			e.Files = w.current.Files
 		}
 		if e.Duration <= 0 && !w.started.IsZero() {
-			e.Duration = time.Since(w.started)
+			e.Duration = now.Sub(w.started)
 		}
-		w.departY = w.rocketY()
-		w.departure = time.Now()
 		w.current = e
+		w.departAt = now
 		w.state = departing
-		if e.Direction == "outgoing" && w.queuedSend {
-			w.paths = nil // Require a fresh source selection for the next launch.
-			w.queuedSend = false
+		w.sheetOpen = false
+		if e.Direction == "outgoing" && w.queued {
+			w.paths, w.sizes = nil, nil // a fresh source selection is needed for the next launch
+			w.queued = false
 		}
-		w.lastFrame = time.Time{}
 	case "error":
 		w.currentSession = e.SessionID
-		w.state = failed
+		if e.Direction == "outgoing" && w.opts.Unqueue != nil {
+			w.opts.Unqueue(w.selectedPhone)
+		}
 		w.current = e
-		w.notice = w.transferError(e.Message)
+		w.fail(w.transferError(e.Message))
 	}
 }
 
-func (w *window) tick() {
-	now := time.Now() // time.Sub uses Go's monotonic clock, not the wall clock.
-	if w.state == transferring && w.current.Total > 0 {
-		target := math.Min(1, math.Max(0, float64(w.current.Bytes)/float64(w.current.Total)))
-		if !w.lastFrame.IsZero() {
-			dt := math.Min(.25, now.Sub(w.lastFrame).Seconds())
-			w.displayProgress += (target - w.displayProgress) * (1 - math.Exp(-6*dt))
-		}
+// dismiss closes the result card and either shows the next waiting session or
+// brings the idle rocket back.
+func (w *window) dismiss() {
+	now := w.frameTime()
+	w.state = idle
+	w.currentSession = 0
+	if len(w.finishedQueue) > 0 {
+		next := w.finishedQueue[0]
+		w.finishedQueue = w.finishedQueue[1:]
+		w.onEvent(next)
+		return
 	}
-	w.lastFrame = now
-	if w.state == departing && time.Since(w.departure) >= 2*time.Second {
-		if len(w.finishedQueue) > 0 {
-			next := w.finishedQueue[0]
-			w.finishedQueue = w.finishedQueue[1:]
-			w.state = idle
-			w.currentSession = 0
+	for id, next := range w.waiting {
+		delete(w.waiting, id)
+		w.onEvent(Event{SessionID: id, Kind: "start", Direction: next.Direction, Name: next.Name, Total: next.Total})
+		if next.Kind == "progress" {
 			w.onEvent(next)
+		}
+		return
+	}
+	w.current = Event{}
+	w.displayProgress = 0
+	w.returnAt = now
+	w.animUntil = now.Add(900 * time.Millisecond)
+	w.syncPhones()
+}
+
+// ---- selection -------------------------------------------------------------
+
+func (w *window) setPaths(paths []string) {
+	var valid []string
+	var sizes []int64
+	skipped := false
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil || !info.Mode().IsRegular() {
+			skipped = true
+			continue
+		}
+		valid = append(valid, p)
+		sizes = append(sizes, info.Size())
+	}
+	if len(valid) == 0 {
+		if skipped {
+			w.showToast(w.tr("Only regular files can be sent"))
+		}
+		return
+	}
+	if len(valid) > 256 {
+		valid, sizes = valid[:256], sizes[:256]
+		w.showToast(w.tr("Too many files (up to 256)"))
+	} else if skipped {
+		w.showToast(w.tr("Only regular files can be sent"))
+	}
+	w.paths, w.sizes = valid, sizes
+	w.sl.pos = 0
+	w.syncPhones()
+}
+
+func (w *window) drop(hdrop uintptr) {
+	defer dragFinish.Call(hdrop)
+	count, _, _ := dragQueryFile.Call(hdrop, 0xffffffff, 0, 0)
+	var paths []string
+	for i := uintptr(0); i < count && i < 4096; i++ {
+		var buf [32768]uint16
+		n, _, _ := dragQueryFile.Call(hdrop, i, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+		if n > 0 {
+			paths = append(paths, syscall.UTF16ToString(buf[:n]))
+		}
+	}
+	if w.state == idle && w.screen == scMain && w.opts.Queue != nil && len(paths) > 0 {
+		w.setPaths(paths)
+		w.invalidate()
+	}
+}
+
+func (w *window) syncPhones() {
+	if w.opts.Phones == nil {
+		return
+	}
+	phones := w.opts.Phones()
+	sort.Slice(phones, func(i, j int) bool {
+		if phones[i].Name != phones[j].Name {
+			return phones[i].Name < phones[j].Name
+		}
+		return phones[i].ID < phones[j].ID
+	})
+	changed := len(phones) != len(w.phones)
+	for i := 0; !changed && i < len(phones); i++ {
+		changed = phones[i].ID != w.phones[i].ID || phones[i].Name != w.phones[i].Name
+	}
+	w.phones = phones
+	before := w.selectedPhone
+	found := false
+	for _, p := range phones {
+		found = found || p.ID == w.selectedPhone
+	}
+	if !found {
+		w.selectedPhone = ""
+		if w.opts.LastPhone != nil {
+			last := w.opts.LastPhone()
+			for _, p := range phones {
+				if p.ID == last {
+					w.selectedPhone = last
+				}
+			}
+		}
+		if w.selectedPhone == "" && len(phones) == 1 {
+			w.selectedPhone = phones[0].ID
+		}
+	}
+	if w.sheetOpen && len(phones) == 0 {
+		w.sheetOpen = false
+	}
+	if changed || before != w.selectedPhone {
+		w.invalidate()
+	}
+}
+
+// ---- input -----------------------------------------------------------------
+
+func (w *window) hit(x, y float32) int {
+	l := w.layout()
+	if w.sheetOpen && w.state == idle {
+		for i, r := range l.rows {
+			if r.contains(x, y) {
+				return hPhoneBase + i
+			}
+		}
+		if l.sheet.contains(x, y) {
+			return hNone
+		}
+		return hSheetOut
+	}
+	if w.screen == scSettings && w.setA > .5 {
+		st := w.settingsLayout(l)
+		if st.back.inset(-4*l.u).contains(x, y) {
+			return hBack
+		}
+		if y < st.top-6*l.u {
+			return hNone
+		}
+		switch {
+		case st.folderChange.contains(x, y) && w.opts.ChangeFolder != nil && !w.folderBusy:
+			return hFolder
+		case st.folderOpen.contains(x, y):
+			return hFolderOpen
+		case st.fwButton.contains(x, y) && !w.fwBusy:
+			if w.opts.FixFirewall != nil && w.fwState == fwMissing {
+				return hFirewall
+			}
+			return hRecheck
+		}
+		return hNone
+	}
+	switch w.state {
+	case idle:
+		if w.uiAlpha(w.frameTime()) < .5 {
+			return hNone
+		}
+		if l.gear.contains(x, y) {
+			return hGear
+		}
+		if w.selA < .5 {
+			if l.choose.contains(x, y) {
+				return hChoose
+			}
+			return hNone
+		}
+		switch {
+		case l.clear.contains(x, y):
+			return hClear
+		case l.summary.contains(x, y):
+			return hSummary
+		case l.thumb.inset(-8*l.u).contains(x, y):
+			return hThumb
+		case l.target.contains(x, y):
+			if len(w.phones) > 1 || (w.selectedPhone == "" && len(w.phones) > 0) {
+				return hTarget
+			}
+		}
+	case resultOK, resultFail, departing:
+		if w.state == departing && w.frameTime().Sub(w.departAt) < 1300*time.Millisecond {
+			return hNone
+		}
+		if w.state == resultOK && w.current.Direction == "incoming" && l.openOut.contains(x, y) {
+			return hOpenOut
+		}
+		if l.ok.contains(x, y) {
+			return hOK
+		}
+	}
+	return hNone
+}
+
+func (w *window) releaseSlider() {
+	w.sl.drag = false
+	if w.sl.pos >= .85 {
+		if w.canLaunch() {
+			w.launch()
 			return
 		}
-		for id, next := range w.waiting {
-			delete(w.waiting, id)
-			w.state = idle
-			w.currentSession = 0
-			w.onEvent(Event{SessionID: id, Kind: "start", Direction: next.Direction, Name: next.Name, Total: next.Total})
-			if next.Kind == "progress" {
-				w.onEvent(next)
-			}
-			return
-		}
-		w.state = finished
-		invalidateRect.Call(w.hwnd, 0, 0)
+		w.flashAt = w.frameTime()
+		w.animUntil = w.flashAt.Add(time.Second)
 	}
+	w.sl.springing, w.sl.from, w.sl.t0 = true, w.sl.pos, w.frameTime()
 }
 
-func (w *window) rocketY() float64 {
-	return float64(w.height)*.65 - w.displayProgress*float64(w.height)*.30
+func (w *window) launch() {
+	now := w.frameTime()
+	w.state = launching
+	w.flightStart = now
+	w.queued = false
+	w.sheetOpen = false
+	w.displayProgress = 0
+	w.current = Event{}
+	w.returnAt = time.Time{}
+	w.launchDeadline = now.Add(60 * time.Second) // replaced once the queue call returns
+	phone, paths := w.selectedPhone, append([]string(nil), w.paths...)
+	queue := w.opts.Queue
+	go func() {
+		status, err := queue(phone, paths)
+		w.enqueue(notification{kind: "send", status: status, err: err})
+	}()
 }
 
-// Actions: files, destination, launch, open downloads, change downloads.
-func (w *window) buttonRect(i int) rect {
-	left, right := int32(w.width-319), int32(w.width-25)
-	switch i {
-	case 0:
-		return rect{left, 180, right, 226}
-	case 1:
-		return rect{left, 292, right, 338}
-	case 2:
-		return rect{left, 376, right, 439}
-	case 3:
-		return rect{left, int32(w.height - 49), left + 143, int32(w.height - 15)}
-	default:
-		return rect{left + 150, int32(w.height - 49), right, int32(w.height - 15)}
-	}
-}
-func (w *window) canSend() bool {
-	return len(w.paths) > 0 && w.selectedPhone != "" && w.opts.Queue != nil && !w.sendBusy && !w.queuedSend
-}
-func (w *window) hit(x, y int) int {
-	for i := 0; i < 5; i++ {
-		r := w.buttonRect(i)
-		if x >= int(r.left) && x < int(r.right) && y >= int(r.top) && y < int(r.bottom) {
-			if i == 1 && (w.phonesBusy || w.opts.Phones == nil) ||
-				i == 2 && !w.canSend() ||
-				i == 4 && (w.folderBusy || w.opts.ChangeFolder == nil) {
-				return -1
-			}
-			return i
-		}
-	}
-	return -1
-}
-
-func (w *window) click(i int) {
-	switch i {
-	case 0:
+func (w *window) click(id int) {
+	switch {
+	case id == hGear:
+		w.screen = scSettings
+		w.setScroll = 0
+		w.syncPhones()
+		w.checkFirewall()
+	case id == hBack:
+		w.screen = scMain
+	case id == hChoose || id == hSummary:
 		if paths := chooseFiles(w.hwnd, w.tr("Select files to send")); len(paths) > 0 {
-			w.paths = paths
-			w.queuedSend = false
-			w.notice = ""
+			w.setPaths(paths)
 		}
-	case 1:
-		w.phonesBusy = true
-		w.notice = w.tr("Looking for phones…")
-		go func() { w.enqueue(notification{kind: "phones", phones: w.opts.Phones()}) }()
-	case 2:
-		w.sendBusy = true
-		w.queuedSend = false
-		// Clear an old result without starting a flight; only transfer events
-		// drive animation and statistics for the new send.
-		if w.state == finished || w.state == failed {
-			w.state = idle
-			w.currentSession = 0
-			w.current = Event{}
-			w.displayProgress = 0
+	case id == hClear:
+		w.paths, w.sizes = nil, nil
+		w.sheetOpen = false
+	case id == hTarget:
+		w.sheetOpen = true
+	case id == hSheetOut:
+		w.sheetOpen = false
+	case id >= hPhoneBase && id-hPhoneBase < len(w.phones):
+		w.selectedPhone = w.phones[id-hPhoneBase].ID
+		if w.opts.RememberPhone != nil {
+			w.opts.RememberPhone(w.selectedPhone)
 		}
-		w.notice = w.tr("Queueing files…")
-		phoneID, paths := w.selectedPhone, append([]string(nil), w.paths...)
-		go func() {
-			status, err := w.opts.Queue(phoneID, paths)
-			w.enqueue(notification{kind: "send", status: status, err: err})
-		}()
-	case 3:
-		if w.folder == "" {
-			w.notice = w.tr("No downloads folder selected.")
-			break
-		}
-		verb, path := wide("open"), wide(w.folder)
-		result, _, _ := shellExecute.Call(w.hwnd, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(path)), 0, 0, 1)
-		runtime.KeepAlive(verb)
-		runtime.KeepAlive(path)
-		if result <= 32 {
-			w.notice = w.tr("Could not open downloads folder.")
-		}
-	case 4:
-		folder := chooseFolder(w.hwnd, w.tr("Select Rocket downloads folder"))
-		if folder != "" {
+		w.sheetOpen = false
+	case id == hOK:
+		w.dismiss()
+	case id == hOpenOut || id == hFolderOpen:
+		w.openFolder()
+	case id == hFolder:
+		if folder := chooseFolder(w.hwnd, w.tr("Select the Rocket receive folder")); folder != "" {
 			w.folderBusy = true
-			w.notice = w.tr("Saving downloads folder…")
-			go func() { w.enqueue(notification{kind: "folder", folder: folder, err: w.opts.ChangeFolder(folder)}) }()
+			change := w.opts.ChangeFolder
+			go func() { w.enqueue(notification{kind: "folder", folder: folder, err: change(folder)}) }()
+		}
+	case id == hFirewall:
+		w.fwBusy = true
+		fix, check := w.opts.FixFirewall, w.opts.FirewallOK
+		go func() {
+			if err := fix(); err == nil {
+				time.Sleep(1500 * time.Millisecond)
+			}
+			w.enqueue(notification{kind: "fw", ok: check != nil && check()})
+		}()
+	case id == hRecheck:
+		w.checkFirewall()
+	}
+	w.invalidate()
+}
+
+func (w *window) checkFirewall() {
+	if w.opts.FirewallOK == nil || w.fwBusy {
+		return
+	}
+	w.fwBusy = true
+	w.fwState = fwUnknown
+	check := w.opts.FirewallOK
+	go func() { w.enqueue(notification{kind: "fw", ok: check()}) }()
+}
+
+func (w *window) openFolder() {
+	if w.folder == "" {
+		w.showToast(w.tr("Could not open the folder"))
+		return
+	}
+	verb, path := wide("open"), wide(w.folder)
+	result, _, _ := shellExecute.Call(w.hwnd, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(path)), 0, 0, 1)
+	runtime.KeepAlive(verb)
+	runtime.KeepAlive(path)
+	if result <= 32 {
+		w.showToast(w.tr("Could not open the folder"))
+	}
+}
+
+func (w *window) key(vk uintptr) {
+	switch vk {
+	case 0x1b: // Escape
+		switch {
+		case w.sheetOpen:
+			w.sheetOpen = false
+		case w.screen == scSettings:
+			w.screen = scMain
+		case w.state == resultOK || w.state == resultFail:
+			w.dismiss()
+		}
+	case 0x0d: // Enter
+		switch {
+		case w.state == resultOK || w.state == resultFail:
+			w.dismiss()
+		case w.state == idle && w.screen == scMain && len(w.paths) == 0:
+			w.click(hChoose)
 		}
 	}
-	invalidateRect.Call(w.hwnd, 0, 0)
+	w.invalidate()
 }
 
 func chooseFolder(owner uintptr, caption string) string {
@@ -699,12 +1080,4 @@ func chooseFolder(owner uintptr, caption string) string {
 		return ""
 	}
 	return syscall.UTF16ToString(path[:])
-}
-
-func (w *window) initFonts() {
-	fontName := wide("Segoe UI")
-	for i, spec := range []struct{ size, weight int32 }{{34, 700}, {21, 600}, {16, 400}, {13, 600}} {
-		w.fonts[i], _, _ = createFont.Call(uintptr(int64(-spec.size)), 0, 0, 0, uintptr(spec.weight), 0, 0, 0, 1, 0, 0, 5, 0, uintptr(unsafe.Pointer(fontName)))
-	}
-	runtime.KeepAlive(fontName)
 }

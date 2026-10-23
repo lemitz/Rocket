@@ -12,11 +12,6 @@ import (
 var (
 	comdlg32        = syscall.NewLazyDLL("comdlg32.dll")
 	getOpenFileName = comdlg32.NewProc("GetOpenFileNameW")
-	createPopupMenu = user32.NewProc("CreatePopupMenu")
-	appendMenu      = user32.NewProc("AppendMenuW")
-	trackPopupMenu  = user32.NewProc("TrackPopupMenuEx")
-	destroyMenu     = user32.NewProc("DestroyMenu")
-	clientToScreen  = user32.NewProc("ClientToScreen")
 )
 
 // OPENFILENAMEW, including the trailing Vista-era fields. Keep all Go-backed
@@ -86,39 +81,4 @@ func parseSelectedFiles(buf []uint16) []string {
 		paths = append(paths, filepath.Join(parts[0], name))
 	}
 	return paths
-}
-
-func (w *window) choosePhone() {
-	menu, _, _ := createPopupMenu.Call()
-	if menu == 0 {
-		w.notice = w.tr("Could not show connected phones.")
-		return
-	}
-	defer destroyMenu.Call(menu)
-	for i, phone := range w.phones {
-		name := phone.Name
-		if name == "" {
-			name = phone.ID
-		}
-		if name != phone.ID {
-			name += "  ·  " + phone.ID
-		}
-		label := wide(name)
-		flags := uintptr(0) // MF_STRING
-		if phone.ID == w.selectedPhone {
-			flags = 0x8 // MF_CHECKED
-		}
-		appendMenu.Call(menu, flags, uintptr(i+1), uintptr(unsafe.Pointer(label)))
-		runtime.KeepAlive(label)
-	}
-	r := w.buttonRect(1)
-	pt := point{r.left, r.bottom}
-	clientToScreen.Call(w.hwnd, uintptr(unsafe.Pointer(&pt)))
-	// TPM_RETURNCMD; no WM_COMMAND handling or separate dropdown control.
-	choice, _, _ := trackPopupMenu.Call(menu, 0x100, uintptr(pt.x), uintptr(pt.y), w.hwnd, 0)
-	if choice > 0 && choice <= uintptr(len(w.phones)) {
-		w.selectedPhone = w.phones[choice-1].ID
-		w.queuedSend = false
-		w.notice = ""
-	}
 }

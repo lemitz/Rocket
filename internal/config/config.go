@@ -17,6 +17,8 @@ type Settings struct {
 	DownloadDir string `json:"download_dir,omitempty"`
 	// NodeID is a public, stable device label for discovery; it is NOT a secret or authentication.
 	NodeID string `json:"node_id,omitempty"`
+	// LastPhone is the phone this PC sent to last; it is preselected when that phone is online.
+	LastPhone string `json:"last_phone,omitempty"`
 }
 
 type Store struct{ Path string }

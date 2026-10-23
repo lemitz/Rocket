@@ -3,6 +3,7 @@
 package desktop
 
 import (
+	"fmt"
 	"strings"
 	"syscall"
 	"time"
@@ -43,76 +44,63 @@ func isRussianLanguage(tag string) bool {
 // English keys provide a complete fallback. Only fixed UI copy belongs here;
 // file names, addresses, paths, transfer errors and device names are user data.
 var russianText = map[string]string{
-	"YOUR DEVICES, ONE ORBIT":                "ТВОИ УСТРОЙСТВА НА ОДНОЙ ОРБИТЕ",
-	"FAST WI-FI TRANSFERS":                   "БЫСТРАЯ ПЕРЕДАЧА ПО WI-FI",
-	"READY FOR LIFTOFF":                      "ГОТОВ К СТАРТУ",
-	"Transfer files between your devices.":   "Передавай файлы между устройствами.",
-	"Choose PC files and a phone to launch.": "Выберите файлы и телефон для отправки.",
-	"TRANSFERRING FILES":                     "ПЕРЕДАЧА ФАЙЛОВ",
-	"RECEIVING FROM PHONE":                   "ПОЛУЧЕНИЕ С ТЕЛЕФОНА",
-	"SENDING TO PHONE":                       "ОТПРАВКА НА ТЕЛЕФОН",
-	"Files in transit":                       "Файлы в пути",
-	"Connecting…":                            "Подключение…",
-	"INTERRUPTED":                            "ПРЕРВАНО",
-	"Flight interrupted":                     "Полёт прерван",
-	"You can try again.":                     "Можно попробовать ещё раз.",
-	"DELIVERED":                              "ДОСТАВЛЕНО",
-	"Flight complete":                        "Полёт завершён",
-	"Files arrived safely.":                  "Файлы долетели без потерь.",
-	"FILES":                                  "ФАЙЛОВ",
-	"SIZE":                                   "ОБЪЁМ",
-	"TIME":                                   "ВРЕМЯ",
-	"AVG. SPEED":                             "СР. СКОРОСТЬ",
-	"THIS COMPUTER":                          "ЭТОТ КОМПЬЮТЕР",
-	"This PC":                                "Этот ПК",
-	"Available on the local network":         "Доступен в локальной сети",
-	"SERVER RUNNING":                         "СЕРВЕР ЗАПУЩЕН",
-	"SERVER OFFLINE":                         "СЕРВЕР НЕ РАБОТАЕТ",
-	"Network address not found":              "Адрес сети не найден",
-	"+%d more addresses":                     "+%d других адреса",
-	"DOWNLOADS FOLDER":                       "ПАПКА ЗАГРУЗОК",
-	"No folder selected":                     "Папка не выбрана",
-	"Waiting for connection":                 "Ожидание подключения",
-	"Transferring":                           "Идёт передача",
-	"Transfer complete":                      "Передача завершена",
-	"Transfer interrupted":                   "Передача прервана",
-	"Server offline":                         "Сервер не работает",
-	"Ready to receive files":                 "Готов принимать файлы",
-	"Open downloads  ↗":                      "Открыть загрузки  ↗",
-	"Change folder  ···":                     "Сменить папку  ···",
-	"Close Rocket  ×":                        "Закрыть Rocket  ×",
-	"Saving folder…":                         "Сохраняем папку…",
-	"Folder change unavailable":              "Смена папки недоступна",
-	"Could not change folder: ":              "Не удалось сменить папку: ",
-	"Could not change folder. Check access and try again.": "Не удалось сменить папку. Проверьте доступ и повторите попытку.",
-	"Checksum mismatch.":                      "Контрольная сумма не совпала.",
-	"Not enough space for the file.":          "Недостаточно места для файла.",
-	"Folder updated for new transfers.":       "Папка обновлена для новых передач.",
-	"Transfer interrupted. Please try again.": "Передача прервана. Попробуй ещё раз.",
-	"No downloads folder selected.":           "Папка загрузок не выбрана.",
-	"Could not open downloads folder.":        "Не удалось открыть папку загрузок.",
-	"Saving downloads folder…":                "Сохраняем папку загрузок…",
-	"Select Rocket downloads folder":          "Выберите папку загрузок Rocket",
-	"1  SELECT FILES ON THIS PC":              "1  ВЫБЕРИТЕ ФАЙЛЫ НА ПК",
-	"2  CHOOSE TARGET PHONE":                  "2  ВЫБЕРИТЕ ТЕЛЕФОН",
-	"No files selected":                       "Файлы не выбраны",
-	"%d files selected":                       "Выбрано файлов: %d",
-	"Open Rocket on the target phone.":        "Откройте Rocket на нужном телефоне.",
-	"Tap to refresh connected phones":         "Нажмите для обновления списка",
-	"Ready to send":                           "Готов к отправке",
-	"Waiting for phone":                       "Ожидание телефона",
-	"Select files and a phone to start":       "Выберите файлы и телефон",
-	"Select phone  ▾":                         "Выбрать телефон  ▾",
-	"Choose files  ···":                       "Выбрать файлы  ···",
-	"Launch  →":                               "Поехали  →",
-	"Open  ↗":                                 "Открыть  ↗",
-	"Change  ···":                             "Сменить  ···",
-	"Select files to send":                    "Выберите файлы для отправки",
-	"Could not show connected phones.":        "Не удалось показать телефоны.",
-	"Looking for phones…":                     "Поиск телефонов…",
-	"Queueing files…":                         "Постановка в очередь…",
-	"Queued. Waiting for phone to connect.":   "В очереди. Ожидание телефона.",
-	"Could not queue files: %v":               "Не удалось поставить файлы в очередь: %v",
+	"Choose files":                   "Выбрать файлы",
+	"or drop files here":             "или перетащите файлы сюда",
+	"Let's go!":                      "Поехали!",
+	"To":                             "На",
+	"Open Rocket on the phone":       "Откройте Rocket на телефоне",
+	"Choose a phone":                 "Выберите телефон",
+	"Waiting for the phone…":         "Ждём телефон…",
+	"Sending…":                       "Отправка…",
+	"Receiving…":                     "Получение…",
+	"Delivered!":                     "Долетели!",
+	"Files sent":                     "Файлы отправлены",
+	"Files received":                 "Файлы получены",
+	"Files":                          "Файлов",
+	"Size":                           "Объём",
+	"Time":                           "Время",
+	"Avg. speed":                     "Ср. скорость",
+	"OK":                             "Ок",
+	"Open folder":                    "Открыть папку",
+	"Didn't make it":                 "Не долетели",
+	"Your files are still selected.": "Файлы всё ещё выбраны.",
+	"The phone did not respond. Open Rocket on it and try again.": "Телефон не отозвался. Откройте на нём Rocket и повторите.",
+	"Could not queue the files: %v":                               "Не удалось поставить файлы в очередь: %v",
+	"Settings":                                                    "Настройки",
+	"Receive folder":                                              "Папка приёма",
+	"Not set":                                                     "Не задана",
+	"Change":                                                      "Изменить",
+	"Open":                                                        "Открыть",
+	"This computer":                                               "Этот компьютер",
+	"This PC":                                                     "Этот ПК",
+	"No network address found":                                    "Сетевой адрес не найден",
+	"Connection check":                                            "Проверка связи",
+	"Rocket server":                                               "Сервер Rocket",
+	"Device discovery":                                            "Поиск устройств",
+	"Firewall":                                                    "Брандмауэр",
+	"Running":                                                     "Работает",
+	"Not running":                                                 "Не работает",
+	"Unavailable":                                                 "Недоступен",
+	"Checking…":                                                   "Проверяю…",
+	"Rules found":                                                 "Правила есть",
+	"Rules missing":                                               "Правил нет",
+	"Fix":                                                         "Исправить",
+	"Recheck":                                                     "Проверить",
+	"Phones":                                                      "Телефоны",
+	"No phones yet. Open Rocket on a phone.":                      "Пока нет телефонов. Откройте Rocket на телефоне.",
+	"%d s ago":                                                    "%d с назад",
+	"No encryption or passwords: use Rocket only on a network you trust.": "Без шифрования и паролей: используйте Rocket только в доверенной сети.",
+	"Select files to send":                                     "Выберите файлы для отправки",
+	"Select the Rocket receive folder":                         "Выберите папку приёма Rocket",
+	"Only regular files can be sent":                           "Можно отправлять только обычные файлы",
+	"Too many files (up to 256)":                               "Слишком много файлов (максимум 256)",
+	"Folder changed":                                           "Папка изменена",
+	"Could not change the folder. Check access and try again.": "Не удалось сменить папку. Проверьте доступ и повторите.",
+	"Could not open the folder":                                "Не удалось открыть папку",
+	"Could not start the firewall fix":                         "Не удалось запустить исправление брандмауэра",
+	"Checksum mismatch.":                                       "Контрольная сумма не совпала.",
+	"Not enough space for the file.":                           "Недостаточно места для файла.",
+	"Transfer interrupted. Please try again.":                  "Передача прервана. Попробуйте ещё раз.",
 }
 
 func (w *window) tr(english string) string {
@@ -138,6 +126,24 @@ func (w *window) transferError(message string) string {
 		}
 	}
 	return w.tr("Transfer interrupted. Please try again.")
+}
+
+// filesLabel is "1 file", "2 files" / "1 файл", "2 файла", "5 файлов".
+func (w *window) filesLabel(n int) string {
+	if !w.russian {
+		if n == 1 {
+			return "1 file"
+		}
+		return fmt.Sprintf("%d files", n)
+	}
+	last, tens := n%10, n%100
+	switch {
+	case tens >= 11 && tens <= 14, last == 0, last >= 5:
+		return fmt.Sprintf("%d файлов", n)
+	case last == 1:
+		return fmt.Sprintf("%d файл", n)
+	}
+	return fmt.Sprintf("%d файла", n)
 }
 
 func (w *window) byteSize(n int64) string {

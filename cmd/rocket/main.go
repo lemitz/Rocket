@@ -131,6 +131,7 @@ func run(args []string) error {
 		}
 		defer ln.Close()
 		udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip, Port: discovery.Port})
+		udpOnline := err == nil
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Rocket: UDP discovery unavailable (manual IP still works):", err)
 		} else {
@@ -159,9 +160,24 @@ func run(args []string) error {
 					events <- desktop.Event{Kind: "error", Message: "Rocket server stopped: " + err.Error()}
 				}
 			}()
+			var lastPhone atomic.Value
+			lastPhone.Store(settings.LastPhone)
 			opts := desktop.Options{
 				Name: pcName, ID: settings.NodeID,
 				Addresses: privateAddresses(*port),
+				UDPOnline: udpOnline,
+				LastPhone: func() string { return lastPhone.Load().(string) },
+				RememberPhone: func(id string) {
+					lastPhone.Store(id)
+					// Reload from disk so a one-off --dir override is never persisted by accident.
+					if saved, err := store.Load(); err == nil {
+						saved.LastPhone = id
+						_ = store.Save(saved)
+					}
+				},
+				Unqueue:     outgoing.Drop,
+				FirewallOK:  firewallRulesPresent,
+				FixFirewall: installFirewallElevated,
 				Phones: func() []desktop.Phone {
 					phones := outgoing.Phones()
 					result := make([]desktop.Phone, 0, len(phones))
@@ -229,12 +245,49 @@ func run(args []string) error {
 	return nil
 }
 
+var firewallRules = []struct{ name, protocol, port string }{
+	{"Rocket TCP", "TCP", "42070"},
+	{"Rocket UDP", "UDP", "42069"},
+}
+
+// netsh runs without flashing a console window; Rocket's own console is hidden in GUI mode.
+func netsh(args ...string) ([]byte, error) {
+	cmd := exec.Command("netsh", args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	return cmd.CombinedOutput()
+}
+
+// firewallRulesPresent reports whether both inbound Rocket rules exist. Read-only.
+func firewallRulesPresent() bool {
+	for _, rule := range firewallRules {
+		if _, err := netsh("advfirewall", "firewall", "show", "rule", "name="+rule.name); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// installFirewallElevated re-runs `rocket.exe firewall install` through a UAC prompt. It only
+// happens when the user presses "Fix" in settings; Rocket never changes the firewall on its own.
+func installFirewallElevated() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	verb, file, params := syscall.StringToUTF16Ptr("runas"), syscall.StringToUTF16Ptr(exe), syscall.StringToUTF16Ptr("firewall install")
+	r, _, callErr := syscall.NewLazyDLL("shell32.dll").NewProc("ShellExecuteW").Call(0,
+		uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(file)), uintptr(unsafe.Pointer(params)), 0, 0) // SW_HIDE
+	if r <= 32 {
+		return fmt.Errorf("elevation was not granted: %v", callErr)
+	}
+	return nil
+}
+
 // Only an explicit command may change Windows Firewall rules. Never do this at startup.
 func installFirewall() error {
-	for _, rule := range []struct{ name, protocol, port string }{
-		{"Rocket TCP", "TCP", "42070"},
-		{"Rocket UDP", "UDP", "42069"},
-	} {
+	for _, rule := range firewallRules {
+		// Replace rather than duplicate when the command is run again.
+		_, _ = netsh("advfirewall", "firewall", "delete", "rule", "name="+rule.name)
 		args := []string{"advfirewall", "firewall", "add", "rule",
 			"name=" + rule.name, "dir=in", "action=allow", "profile=private",
 			"remoteip=localsubnet", "protocol=" + rule.protocol, "localport=" + rule.port}
