@@ -29,6 +29,7 @@ type Phone struct {
 type Options struct {
 	Name         string
 	ID           string
+	Version      string // build version shown in settings ("dev" for local builds)
 	Addresses    []string
 	UDPOnline    bool // UDP discovery responder is listening
 	Folder       func() string

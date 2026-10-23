@@ -1,0 +1,41 @@
+name: Bug report
+description: Something does not work, looks wrong or transfers fail
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you got instead. Screenshots help.
+    validations:
+      required: true
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Direction
+      options:
+        - Phone to PC
+        - PC to phone
+        - Finding the other device
+        - Settings / appearance
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "Rocket on the PC (`rocket.exe version`) and on the phone (Settings, bottom card), Windows version, phone model and Android version."
+      placeholder: "PC 0.2.0 / Windows 11 24H2, phone 0.2.0 / Nothing Phone (3a), Android 15"
+    validations:
+      required: true
+  - type: textarea
+    id: network
+    attributes:
+      label: Network
+      description: "Same Wi-Fi? Guest or client-isolation Wi-Fi? Network profile on the PC (Private/Public)? Does `Settings -> Connection check` pass on both devices?"
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: File sizes and count, error text from the result card, whether it happens every time.

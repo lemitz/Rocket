@@ -1,0 +1,19 @@
+name: Idea
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Rocket has one job: pick files, slide, fly. Ideas that keep the main screen to the rocket, a few buttons and a gear are the easiest to accept; everything else belongs in settings.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like
+      description: The problem first, then what you imagine.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead

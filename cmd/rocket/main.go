@@ -22,6 +22,9 @@ import (
 	"rocket/internal/server"
 )
 
+// version is set at build time: -ldflags "-X main.version=1.2.3" (see scripts/build.ps1).
+var version = "dev"
+
 func main() {
 	gui := len(os.Args) == 1 || len(os.Args) > 1 && os.Args[1] == "gui"
 	if gui {
@@ -42,7 +45,11 @@ func run(args []string) error {
 		args = []string{"gui"} // Double-clicking rocket.exe opens the native PC dashboard.
 	}
 	if args[0] == "help" {
-		fmt.Println("usage: rocket [gui] | daemon; rocket settings show|set-download-dir PATH|reset-download-dir; rocket firewall install; rocket ping|put FILE [options]")
+		fmt.Println("usage: rocket [gui] | daemon; rocket version; rocket settings show|set-download-dir PATH|reset-download-dir; rocket firewall install; rocket ping|put FILE [options]")
+		return nil
+	}
+	if args[0] == "version" {
+		fmt.Println("rocket", version)
 		return nil
 	}
 	if args[0] == "firewall" {
@@ -163,7 +170,7 @@ func run(args []string) error {
 			var lastPhone atomic.Value
 			lastPhone.Store(settings.LastPhone)
 			opts := desktop.Options{
-				Name: pcName, ID: settings.NodeID,
+				Name: pcName, ID: settings.NodeID, Version: version,
 				Addresses: privateAddresses(*port),
 				UDPOnline: udpOnline,
 				LastPhone: func() string { return lastPhone.Load().(string) },

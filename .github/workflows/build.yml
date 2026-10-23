@@ -1,0 +1,196 @@
+name: Build and release
+
+# - every pull request: tests, then the Windows exe and the Android APK, attached to the run as
+#   artifacts (Actions -> the run -> Artifacts) so a change can be tested before it is merged
+# - merge to main: the same, then a GitHub Release v<VERSION> with exe, apk and SHA256SUMS.txt,
+#   but only if that tag does not exist yet - bump VERSION and RELEASE_NOTES.md in the pull request
+#   to ship a release, leave them alone and the merge only builds
+# - "Run workflow" button: build any branch on demand (never publishes)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  # A release run must never be cancelled half way; superseded pull request runs may be.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      publish: ${{ steps.meta.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check release metadata and decide whether to publish
+        id: meta
+        shell: pwsh
+        run: |
+          ./scripts/check-release.ps1
+          $version = (Get-Content VERSION -Raw).Trim()
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+          $publish = 'false'
+          if ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -eq 'refs/heads/main') {
+            git fetch --tags --quiet
+            if (git tag --list "v$version") {
+              Write-Host "::notice title=No release::v$version is already released. Bump VERSION and RELEASE_NOTES.md to publish a new one."
+            } else {
+              $publish = 'true'
+            }
+          }
+          "publish=$publish" >> $env:GITHUB_OUTPUT
+          Write-Host "version=$version publish=$publish"
+
+      - name: Tell the author whether merging will release
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --quiet "origin/${{ github.base_ref }}...HEAD" -- VERSION; then
+            echo "::notice title=No release::This pull request does not change VERSION, so merging it will build but not publish a release."
+          else
+            echo "::notice title=Release::VERSION changes to $(cat VERSION): merging this pull request will publish v$(cat VERSION)."
+          fi
+
+  windows:
+    needs: meta
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        shell: pwsh
+        run: |
+          $unformatted = gofmt -l cmd internal tools
+          if ($unformatted) { throw "gofmt: run 'gofmt -w' on:`n$unformatted" }
+
+      - run: go vet ./...
+      - run: go test -race ./...
+
+      - name: Build rocket.exe
+        shell: pwsh
+        run: |
+          $version = '${{ needs.meta.outputs.version }}'
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o "dist/Rocket-$version-win-x64.exe" ./cmd/rocket
+          if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
+
+      - name: Smoke-test the executable
+        shell: pwsh
+        run: |
+          $version = '${{ needs.meta.outputs.version }}'
+          $out = & "dist/Rocket-$version-win-x64.exe" version
+          Write-Host $out
+          if ($out -ne "rocket $version") { throw "Unexpected version output: '$out'" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  android:
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/rocket-release.jks"
+            {
+              echo "ROCKET_KEYSTORE_FILE=$RUNNER_TEMP/rocket-release.jks"
+              echo "ROCKET_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "ROCKET_KEY_ALIAS=$KEY_ALIAS"
+              echo "ROCKET_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Signing with the release keystore."
+          else
+            echo "::notice title=Android signing::No ANDROID_KEYSTORE_BASE64 secret (pull requests from forks never get it): the APK is signed with a throw-away debug key, so installing it over an app signed differently needs an uninstall first. See scripts/make-keystore.ps1."
+          fi
+
+      - name: Build the APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Collect the APK
+        run: |
+          version='${{ needs.meta.outputs.version }}'
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/Rocket-$version-android.apk"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: needs.meta.outputs.publish == 'true'
+    needs: [meta, windows, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: release
+        run: |
+          sha256sum Rocket-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          gh release create "v$VERSION" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Rocket v$VERSION" \
+            --notes-file RELEASE_NOTES.md \
+            --generate-notes

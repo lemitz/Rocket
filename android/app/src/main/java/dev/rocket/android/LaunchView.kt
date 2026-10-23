@@ -540,9 +540,10 @@ internal class LaunchView(context: Context) : View(context) {
             val seed = i * .754877f + .2f
             val angle = frac(seed * 5.3f) * 2 * Math.PI
             val dist = .8f + .5f * frac(seed * 2.9f)
-            val fx = (ccx + cos(angle).toFloat() * l.card.width() * .46f * dist).coerceIn(l.w * .06f, l.w * .94f)
+            val fx = ccx + cos(angle).toFloat() * l.card.width() * .46f * dist
             val fy = ccy + sin(angle).toFloat() * l.card.height() * .50f * dist + l.card.height() * .06f
             val r = (46 + frac(seed * 8.1f) * 56) * l.u
+            if (fx < l.w * .1f || fx > l.w * .9f) continue // a puff cut by the screen edge would show up as a bright bar
             val p = ease((dd - .5 - .025 * i) / 1.2).toFloat()
             // Puffs squeezed against the screen edge would pile up into a bright bar: fade them out.
             val edge = (min(fx, l.w - fx) / (r * .8f)).coerceIn(0f, 1f)

@@ -45,7 +45,7 @@ func (w *window) settingsLayout(l layout) settingsLayout {
 	s.phoneCard = rectF{s.x, y, cw, 52*u + float32(m)*28*u}
 	y += s.phoneCard.h + gap
 
-	s.footer = rectF{s.x, y, cw, 44 * u}
+	s.footer = rectF{s.x, y, cw, 64 * u}
 	y += s.footer.h + 28*u
 	s.contentH = y + w.setScroll - s.top
 	return s
@@ -169,6 +169,10 @@ func (w *window) drawSettings(s *surface, l layout, now time.Time) {
 	// Footer
 	for i, line := range w.ts.wrap(w.tr("No encryption or passwords: use Rocket only on a network you trust."), int(st.footer.w-8*u), int(12*u+.5), 400, 2) {
 		w.txt(s, line, st.footer.x+4*u, st.footer.y+10*u+float32(i)*18*u+slide, 12, 400, cDim, a, 0, l)
+	}
+
+	if w.opts.Version != "" {
+		w.txt(s, "Rocket "+w.opts.Version, st.footer.x+4*u, st.footer.y+st.footer.h-12*u+slide, 12, 500, cDim, a, 0, l)
 	}
 
 	// Header sits above the scrolled content.

@@ -537,9 +537,12 @@ func (w *window) drawSmoke(s *surface, l layout, now time.Time, front bool) {
 		seed := float32(i)*.754877 + .2
 		angle := float64(frac(seed*5.3)) * 2 * math.Pi
 		dist := .8 + .5*frac(seed*2.9)
-		fx := clampF(cardCx+float32(math.Cos(angle))*l.card.w*.46*dist, l.w*.06, l.w*.94)
+		fx := cardCx + float32(math.Cos(angle))*l.card.w*.46*dist
 		fy := cardCy + float32(math.Sin(angle))*l.card.h*.50*dist + l.card.h*.06
 		r := (46 + frac(seed*8.1)*56) * l.u
+		if fx < l.w*.1 || fx > l.w*.9 {
+			continue // a puff cut by the window edge would show up as a bright bar
+		}
 		p := ease((D - .5 - .025*float64(i)) / 1.2)
 		a := (.12 + frac(seed*6.7)*.10) * f32(p)
 		c := mix(rgbCol(0xD9D1FA), rgbCol(0x8E86D6), frac(seed*3.3))

@@ -1,3 +1,7 @@
 rocket.exe
-*.exe~
 /dist/
+*.jks
+*.keystore
+*.b64
+.vscode/
+.idea/
