@@ -153,7 +153,7 @@ internal/
   config/                  settings, PC id, the Windows Downloads folder
   desktop/                 the PC window: software renderer, scene, settings, Direct2D presenter
 android/app/               the phone app: LaunchView (the scene), MainActivity, SettingsPanel, protocol, storage
-docs/                      HANDOFF, ARCHITECTURE, PROTOCOL, BUILD_TEST, OPEN_ISSUES (in Russian)
+docs/                      ARCHITECTURE, PROTOCOL, BUILD_TEST, OPEN_ISSUES (in Russian)
 .github/                   the build and release workflow, issue and pull request templates
 ```
 
