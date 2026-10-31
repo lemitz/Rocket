@@ -153,7 +153,7 @@ internal/
   config/                  настройки, ID ПК, папка Downloads в Windows
   desktop/                 окно ПК: программный рендер, сцена, настройки, презентер Direct2D
 android/app/               приложение телефона: LaunchView (сцена), MainActivity, SettingsPanel, протокол, хранилище
-docs/                      HANDOFF, ARCHITECTURE, PROTOCOL, BUILD_TEST, OPEN_ISSUES (на русском)
+docs/                      ARCHITECTURE, PROTOCOL, BUILD_TEST, OPEN_ISSUES (на русском)
 .github/                   workflow сборки и релиза, шаблоны issue и pull request
 ```
 
