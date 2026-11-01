@@ -106,7 +106,7 @@ go run ./cmd/rocket daemon             # только сервер, в конс�
 cd android && ./gradlew :app:assembleDebug     # gradlew.bat в Windows
 ```
 
-Окно можно просмотреть, не открывая его: `ROCKET_SNAPSHOT_DIR=out go test ./internal/desktop -run TestRenderStates` пишет PNG каждого состояния экрана на английском и русском. В [docs/BUILD_TEST.md](docs/BUILD_TEST.md) описана и сквозная проверка с эмулятором Android, а в [docs/OPEN_ISSUES.md](docs/OPEN_ISSUES.md) перечислено, что известно как недоделанное или непроверенное.
+Окно можно просмотреть, не открывая его: `ROCKET_SNAPSHOT_DIR=out go test ./internal/desktop -run TestRenderStates` пишет PNG каждого состояния экрана на английском и русском. В [docs/BUILD_TEST.md](docs/BUILD_TEST.md) описана и сквозная проверка с эмулятором Android.
 
 ## Сборка
 
@@ -153,7 +153,7 @@ internal/
   config/                  настройки, ID ПК, папка Downloads в Windows
   desktop/                 окно ПК: программный рендер, сцена, настройки, презентер Direct2D
 android/app/               приложение телефона: LaunchView (сцена), MainActivity, SettingsPanel, протокол, хранилище
-docs/                      ARCHITECTURE, PROTOCOL, BUILD_TEST, OPEN_ISSUES (на русском)
+docs/                      ARCHITECTURE, PROTOCOL, BUILD_TEST (на русском)
 .github/                   workflow сборки и релиза, шаблоны issue и pull request
 ```
 

@@ -106,7 +106,7 @@ go run ./cmd/rocket daemon             # server only, in the console, for diagno
 cd android && ./gradlew :app:assembleDebug     # gradlew.bat on Windows
 ```
 
-The window can be reviewed without opening it: `ROCKET_SNAPSHOT_DIR=out go test ./internal/desktop -run TestRenderStates` writes a PNG of every screen state in English and Russian. [docs/BUILD_TEST.md](docs/BUILD_TEST.md) also describes the end-to-end check with the Android emulator, and [docs/OPEN_ISSUES.md](docs/OPEN_ISSUES.md) lists what is known to be unfinished or untested.
+The window can be reviewed without opening it: `ROCKET_SNAPSHOT_DIR=out go test ./internal/desktop -run TestRenderStates` writes a PNG of every screen state in English and Russian. [docs/BUILD_TEST.md](docs/BUILD_TEST.md) also describes the end-to-end check with the Android emulator.
 
 ## Building
 
@@ -153,7 +153,7 @@ internal/
   config/                  settings, PC id, the Windows Downloads folder
   desktop/                 the PC window: software renderer, scene, settings, Direct2D presenter
 android/app/               the phone app: LaunchView (the scene), MainActivity, SettingsPanel, protocol, storage
-docs/                      ARCHITECTURE, PROTOCOL, BUILD_TEST, OPEN_ISSUES (in Russian)
+docs/                      ARCHITECTURE, PROTOCOL, BUILD_TEST (in Russian)
 .github/                   the build and release workflow, issue and pull request templates
 ```
 
