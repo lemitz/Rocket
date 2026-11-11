@@ -112,7 +112,7 @@ go run ./cmd/rocket daemon             # только сервер, в конс�
 cd android && ./gradlew :app:assembleDebug     # gradlew.bat в Windows
 ```
 
-Окно можно просмотреть, не открывая его: `ROCKET_SNAPSHOT_DIR=out go test ./internal/desktop -run TestRenderStates` пишет PNG каждого состояния экрана на английском и русском. В [docs/BUILD_TEST.md](docs/BUILD_TEST.md) описана и сквозная проверка с эмулятором Android, а в [docs/OPEN_ISSUES.md](docs/OPEN_ISSUES.md) перечислено, что известно как недоделанное или непроверенное.
+Окно можно просмотреть, не открывая его: `ROCKET_SNAPSHOT_DIR=out go test ./internal/desktop -run TestRenderStates` пишет PNG каждого состояния экрана на английском и русском. В [docs/BUILD_TEST.md](docs/BUILD_TEST.md) описана и сквозная проверка с эмулятором Android.
 
 ## Сборка
 
@@ -152,14 +152,14 @@ scripts/                   build.ps1, check-release.ps1, make-keystore.ps1
 cmd/rocket/                точка входа, CLI (daemon, firewall, settings), ресурсы Windows (иконка, манифест)
 internal/
   wire/                    кадры протокола
-  server/                  TCP-сессии: put, poll, offer-get, offer-done, статистика передач
-  outbox/                  файлы, адресованные ПК телефонам (хранятся в памяти)
+  server/                  TCP-сессии: файлы, текст, опрос и статистика передач
+  outbox/                  файлы и текст для телефонов (хранятся в памяти)
   fsx/                     временные файлы, безопасные имена, публикация без перезаписи
   discovery/               UDP-ответ на «кто здесь»
   config/                  настройки, ID ПК, папка Downloads в Windows
   desktop/                 окно ПК: программный рендер, сцена, настройки, презентер Direct2D
 android/app/               приложение телефона: LaunchView (сцена), MainActivity, SettingsPanel, протокол, хранилище
-docs/                      HANDOFF, ARCHITECTURE, PROTOCOL, BUILD_TEST, OPEN_ISSUES (на русском)
+docs/                      ARCHITECTURE, PROTOCOL, BUILD_TEST (на русском)
 .github/                   workflow сборки и релиза, шаблоны issue и pull request
 ```
 

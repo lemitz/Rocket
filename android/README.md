@@ -10,7 +10,7 @@ The rocket scene redraws on display vsync only while something moves (slider dra
 
 ## Build / use
 
-Install Android SDK 36 + build tools, set `ANDROID_HOME` or put `sdk.dir=Z:/SDK` in `local.properties`, then run `gradlew.bat :app:assembleDebug --offline` with Gradle 8.13. APK: `app/build/outputs/apk/debug/app-debug.apk`.
+Install Android SDK 36 + build tools, set `ANDROID_HOME` or put `sdk.dir=<path to your SDK>` in `local.properties`, then run `gradlew.bat :app:assembleDebug --offline` with Gradle 8.13. APK: `app/build/outputs/apk/debug/app-debug.apk`.
 
 **One screen.** The rocket, a **Choose files** button and a gear (Share from other apps works too). After choosing, a files chip, a destination line ("To DESKTOP-ABC") and the **Let's go!** slider appear; dragging it right (≥85%) launches, hides all controls and flies the rocket until the PC confirms; then the rocket leaves and a card shows files, size, time and average speed. Choosing or sharing files never starts a transfer. Successful sending clears the selection; after a failure the files stay selected and nothing is retried automatically (earlier files of a batch may already be on the PC). **Cancel** appears quietly during flight; Back also cancels.
 

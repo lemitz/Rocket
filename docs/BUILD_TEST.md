@@ -1,13 +1,13 @@
 # Сборка, проверки, диагностика
 
-Команды ниже исполняются в Windows PowerShell; корень проекта — `Z:\opencode\Rocket`. Проект — Git-репозиторий (`main`); `git.exe` лежит в `C:\Program Files\Git\cmd` и не в PATH. Не считать `rocket.exe` и `android/app/build/` исходниками (они в `.gitignore`).
+Команды ниже исполняются в Windows PowerShell; команды выполняются из корня репозитория. Проект — Git-репозиторий (`main`). Не считать `rocket.exe` и `android/app/build/` исходниками (они в `.gitignore`).
 
 ## Windows Go
 
 Требуется установленный Go 1.25+ (проверялся `go1.25.5 windows/amd64`). В `go.mod` только `module rocket`, внешних Go-модулей нет.
 
 ```powershell
-# workdir: Z:\opencode\Rocket
+# workdir: <корень репозитория>
 go test -race ./...
 go vet ./...
 go build -trimpath -ldflags='-s -w' -o rocket.exe ./cmd/rocket
@@ -53,19 +53,19 @@ $env:ROCKET_SNAPSHOT_DIR = 'C:\path\to\snap'; go test ./internal/desktop -run Te
 4. Сверять SHA-256 исходника и сохранённой копии, а также согласованность статистики на обеих сторонах. После теста удалить тестовые файлы из `Download` эмулятора и закрыть Rocket.
 ## Android Kotlin
 
-`Z:\SDK` содержит SDK и `platform-tools/adb.exe`, platform API 36; установлен JDK 21. `android/gradle/wrapper` содержит Gradle 8.13; root `android/build.gradle.kts` — AGP 8.13.1 и Kotlin Android 2.1.0. `android/app/build.gradle.kts`: compile/target SDK 36, min SDK 34, bytecode Java/Kotlin 17, `applicationId=dev.rocket.android`, debug APK версия 0.1. В APK нет Compose, AndroidX и сторонних runtime-зависимостей.
+Нужны Android SDK (platform API 36 и `platform-tools/adb.exe`) и JDK 21. `android/gradle/wrapper` содержит Gradle 8.13; root `android/build.gradle.kts` — AGP 8.13.1 и Kotlin Android 2.1.0. `android/app/build.gradle.kts`: compile/target SDK 36, min SDK 34, bytecode Java/Kotlin 17, `applicationId=dev.rocket.android`, версия debug/release APK берётся из корневого `VERSION`. В APK нет Compose, AndroidX и сторонних runtime-зависимостей.
 
 ```powershell
-# workdir: Z:\opencode\Rocket\android
+# workdir: <корень репозитория>\android
 .\gradlew.bat :app:assembleDebug --offline --no-daemon
 powershell -NoProfile -File .\tests\run-smoke.ps1
 
 # артефакт: app\build\outputs\apk\debug\app-debug.apk
-& 'Z:\SDK\platform-tools\adb.exe' devices
-& 'Z:\SDK\platform-tools\adb.exe' install -r '.\app\build\outputs\apk\debug\app-debug.apk'
+& "$env:ANDROID_HOME\platform-tools\adb.exe" devices
+& "$env:ANDROID_HOME\platform-tools\adb.exe" install -r '.\app\build\outputs\apk\debug\app-debug.apk'
 ```
 
-`android/local.properties` содержит `sdk.dir=Z:/SDK` **только для этой машины**, файл игнорируется Android `.gitignore`. В другом окружении настрой `ANDROID_HOME`/`ANDROID_SDK_ROOT` или свой путь в `local.properties`. `--offline` возможен лишь при заранее скачанных Gradle/AGP/Kotlin артефактах; на новой машине первый sync может требовать сеть. `tests/run-smoke.ps1` проверяет **только парсер UDP-обнаружения** на JVM после build; тестов Android `src/test`/`androidTest` пока нет.
+Путь к SDK задаётся через `ANDROID_HOME`/`ANDROID_SDK_ROOT` или в `android/local.properties` (`sdk.dir=...`); этот файл специфичен для машины и игнорируется Android `.gitignore`. `--offline` возможен лишь при заранее скачанных Gradle/AGP/Kotlin артефактах; на новой машине первый sync может требовать сеть. `tests/run-smoke.ps1` проверяет **только парсер UDP-обнаружения** на JVM после build; тестов Android `src/test`/`androidTest` пока нет.
 
 ## Новый сценарий: проверка буфера обмена (пока вручную)
 
@@ -95,6 +95,6 @@ TCP `42070`, UDP `42069` по умолчанию. Если обнаружени�
 
 Обычный запуск Rocket ничего в брандмауэре не меняет; окно показывает проверку правил в настройках, а кнопка «Исправить» запускает эту же команду с запросом UAC. Команда заменяет старые правила `Rocket TCP`/`Rocket UDP`, а не дублирует их. В консольном режиме `rocket.exe daemon` пишет реальные адреса интерфейсов; GUI показывает адреса ПК в настройках («Этот компьютер»). `-port` меняет TCP listener для диагностики, но Android/UDP discovery/команда firewall жёстко используют 42070/42069: нестандартный порт **не совместим с текущим APK**.
 
-## Фактическое состояние проверок (ноябрь 2026)
+## Состояние проверок
 
-После добавления сообщений выполнены: `go vet ./...`, `go test -race ./...` (в том числе интеграционные тесты текстового протокола и подтверждений), `gradlew.bat :app:assembleDebug --offline --no-daemon`, `android/tests/run-smoke.ps1`, снимки ПК `TestRenderStates` с состояниями текста на RU/EN. Пересобраны локальные `rocket.exe` и `android/app/build/outputs/apk/debug/app-debug.apk`. Android эмулятор/реальный телефон для проверки **текста и системного clipboard** не подключался — полноценный сквозной тест пока нужен. Предыдущая файловая проверка на API 36 эмуляторе и сообщение пользователя о стабильной работе файлов более недели сохраняют силу. В редакции документа до ноября ошибочно упоминалось отсутствие проверок на реальных устройствах как вечный факт; состояние текущего железа и 120 fps уточнять у пользователя.
+Для версии 0.3.0 выполнены: `go vet ./...`, `go test -race ./...` (включая интеграционные тесты текстового протокола и подтверждений), `scripts/build.ps1 -Offline` (EXE и debug/release APK), `android/tests/run-smoke.ps1`, снимки ПК `TestRenderStates` с текстовыми карточками на RU/EN и тестом нажатия OK в компактном окне. **Системный буфер и доставка текста пока не проверены сквозным тестом на телефоне**; пользователь сообщил, что файловые сценарии стабильно работают на его устройствах больше недели. Ранее обе файловые передачи проверялись на эмуляторе API 36 с настоящим Windows GUI и совпадающими SHA-256; фактические 120 показанных кадров/с требуют отдельного замера.
