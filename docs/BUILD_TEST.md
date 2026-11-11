@@ -53,7 +53,7 @@ $env:ROCKET_SNAPSHOT_DIR = 'C:\path\to\snap'; go test ./internal/desktop -run Te
 4. Сверять SHA-256 исходника и сохранённой копии, а также согласованность статистики на обеих сторонах. После теста удалить тестовые файлы из `Download` эмулятора и закрыть Rocket.
 ## Android Kotlin
 
-Нужны Android SDK (platform API 36 и `platform-tools/adb.exe`) и JDK 21. `android/gradle/wrapper` содержит Gradle 8.13; root `android/build.gradle.kts` — AGP 8.13.1 и Kotlin Android 2.1.0. `android/app/build.gradle.kts`: compile/target SDK 36, min SDK 34, bytecode Java/Kotlin 17, `applicationId=dev.rocket.android`, debug APK версия 0.1. В APK нет Compose, AndroidX и сторонних runtime-зависимостей.
+Нужны Android SDK (platform API 36 и `platform-tools/adb.exe`) и JDK 21. `android/gradle/wrapper` содержит Gradle 8.13; root `android/build.gradle.kts` — AGP 8.13.1 и Kotlin Android 2.1.0. `android/app/build.gradle.kts`: compile/target SDK 36, min SDK 34, bytecode Java/Kotlin 17, `applicationId=dev.rocket.android`, версия debug/release APK берётся из корневого `VERSION`. В APK нет Compose, AndroidX и сторонних runtime-зависимостей.
 
 ```powershell
 # workdir: <корень репозитория>\android
@@ -66,6 +66,13 @@ powershell -NoProfile -File .\tests\run-smoke.ps1
 ```
 
 Путь к SDK задаётся через `ANDROID_HOME`/`ANDROID_SDK_ROOT` или в `android/local.properties` (`sdk.dir=...`); этот файл специфичен для машины и игнорируется Android `.gitignore`. `--offline` возможен лишь при заранее скачанных Gradle/AGP/Kotlin артефактах; на новой машине первый sync может требовать сеть. `tests/run-smoke.ps1` проверяет **только парсер UDP-обнаружения** на JVM после build; тестов Android `src/test`/`androidTest` пока нет.
+
+## Новый сценарий: проверка буфера обмена (пока вручную)
+
+1. Установить обновлённый EXE **и** обновлённый APK, запустить GUI ПК и открыть Rocket на телефоне. Для ПК→телефон скопировать в Windows тестовую многострочную строку с кириллицей и emoji; перевести фокус на главное окно Rocket, нажать **Ctrl+V**. Проверить превью и отсутствие передачи до свайпа. Выбрать правильный телефон, свайпнуть «Поехали!», затем вставить на телефоне в безопасное поле; проверить точное совпадение и автоматическое копирование. Если Android 13+ показывает системное уведомление о новом буфере — это ожидаемо.
+2. Для телефон→ПК нажать «Отправить текст», набрать/вставить тестовую строку, нажать «Подготовить» и «Поехали!». Также проверить Share → текст из стороннего приложения. Проверить, что до свайпа буфер ПК не менялся, а после копирования вставка на ПК даёт исходную строку; результат на телефоне появляется только после ACK Windows. Для фонового `rocket.exe daemon` `put-text` должен вернуть ошибку (без окна буфер не используется).
+3. Проверить два телефона (только выбранный получатель), RU/EN, пробелы/переносы/emoji, пустой текст, лимит 8192 байт, отсутствие файла в Downloads, прерывание до ACK и повтор при потерянном `text-done`. Получение **заменяет** прошлый текст буфера. Не подставлять приватное содержимое буфера в тесты/логи. В тестах GUI запрещено слать SendKeys в активное окно пользователя; только свой HWND.
+4. `go test -race ./...`, `go vet ./...`, `android/gradlew.bat :app:assembleDebug --offline --no-daemon`, `android/tests/run-smoke.ps1` проверяют код и сборку, но **не** системные clipboard на настоящих устройствах.
 
 ## Ручной сквозной тест
 
@@ -90,4 +97,4 @@ TCP `42070`, UDP `42069` по умолчанию. Если обнаружени�
 
 ## Состояние проверок
 
-Выполнены: `go vet ./...`, `go test -race ./...`, `gradlew.bat :app:assembleDebug --offline --no-daemon`, `android/tests/run-smoke.ps1` (всё успешно); сквозные передачи в обе стороны на эмуляторе API 36 с настоящим `rocket.exe` (SHA-256 совпал); снимки состояний ПК. Не проверялись реальные телефоны, два ПК, Wi-Fi 6, масштаб Windows выше 100% и 120 показанных кадров/с. Тестовые файлы с эмулятора удалены, `rocket.exe` и эмулятор закрыты.
+Для версии 0.3.0 выполнены: `go vet ./...`, `go test -race ./...` (включая интеграционные тесты текстового протокола и подтверждений), `scripts/build.ps1 -Offline` (EXE и debug/release APK), `android/tests/run-smoke.ps1`, снимки ПК `TestRenderStates` с текстовыми карточками на RU/EN и тестом нажатия OK в компактном окне. **Системный буфер и доставка текста пока не проверены сквозным тестом на телефоне**; пользователь сообщил, что файловые сценарии стабильно работают на его устройствах больше недели. Ранее обе файловые передачи проверялись на эмуляторе API 36 с настоящим Windows GUI и совпадающими SHA-256; фактические 120 показанных кадров/с требуют отдельного замера.

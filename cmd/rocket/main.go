@@ -152,6 +152,21 @@ func run(args []string) error {
 			currentDir.Store(dir)
 			srv.DirProvider = func() string { return currentDir.Load().(string) }
 			events := make(chan desktop.Event, 128)
+			textInbox := make(chan desktop.TextDelivery)
+			srv.OnText = func(text string) error {
+				request := desktop.TextDelivery{Text: text, Done: make(chan error, 1)}
+				select {
+				case textInbox <- request:
+				case <-time.After(5 * time.Second):
+					return errors.New("Rocket window did not respond")
+				}
+				select {
+				case err := <-request.Done:
+					return err
+				case <-time.After(5 * time.Second):
+					return errors.New("clipboard did not respond")
+				}
+			}
 			srv.OnEvent = func(e desktop.Event) {
 				if e.Kind == "progress" {
 					select {
@@ -193,8 +208,10 @@ func run(args []string) error {
 					}
 					return result
 				},
-				Queue:  outgoing.Queue,
-				Folder: func() string { return currentDir.Load().(string) },
+				Queue:     outgoing.Queue,
+				QueueText: outgoing.QueueText,
+				TextInbox: textInbox,
+				Folder:    func() string { return currentDir.Load().(string) },
 				ChangeFolder: func(path string) error {
 					clean, err := config.ValidateDirectory(path)
 					if err != nil {

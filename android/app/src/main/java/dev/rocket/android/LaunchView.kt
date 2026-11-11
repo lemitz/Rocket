@@ -57,6 +57,7 @@ internal object Pal {
 internal class LaunchView(context: Context) : View(context) {
     interface Host {
         fun onChoose()
+        fun onComposeText()
         fun onClear()
         fun onTarget()
         fun onSettings()
@@ -88,6 +89,7 @@ internal class LaunchView(context: Context) : View(context) {
     private var fileCount = 0
     private var selBytes = 0L
     private var selName: String? = null
+    private var selText: String? = null
     private var targetText = ""
     private var targetDot = Pal.warn
     private var targetPickable = false
@@ -98,6 +100,8 @@ internal class LaunchView(context: Context) : View(context) {
     private var progress = 0f
     private var incoming = false
     private var stats: TransferSnapshot? = null
+    private var copiedMessages = 0
+    private var receivedFiles = 0
     private var failText = ""
     private var topInset = 0f
     private var bottomInset = 0f
@@ -161,9 +165,10 @@ internal class LaunchView(context: Context) : View(context) {
 
     // ================================================================ public API
 
-    fun setSelection(count: Int, bytes: Long, name: String?) {
+    fun setSelection(count: Int, bytes: Long, name: String?, message: String?) {
         fileCount = count; selBytes = bytes; selName = name
-        if (count == 0) { sliderPos = 0f; springing = false }
+        selText = message?.replace(Regex("\\s+"), " ")
+        if (count == 0 && message == null) { sliderPos = 0f; springing = false }
         invalidate()
     }
 
@@ -188,6 +193,8 @@ internal class LaunchView(context: Context) : View(context) {
         displayProgress = 0f
         progress = 0f
         stats = null
+        copiedMessages = 0
+        receivedFiles = 0
         sheetOpen = false
         returnAt = -1.0
         contentDescription = context.getString(R.string.rocket_flying)
@@ -213,6 +220,18 @@ internal class LaunchView(context: Context) : View(context) {
         postInvalidateOnAnimation()
     }
 
+    /** Same flight/reveal as files, but no misleading file/byte statistics for clipboard messages. */
+    fun succeedText(messages: Int, files: Int) {
+        if (phase != Phase.LAUNCHING && phase != Phase.FLYING) return
+        copiedMessages = messages
+        receivedFiles = files
+        departAt = now()
+        phase = Phase.DEPARTING
+        contentDescription = context.getString(if (incoming) R.string.message_copied else R.string.message_sent)
+        performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        postInvalidateOnAnimation()
+    }
+
     fun fail(message: String) {
         if (phase == Phase.IDLE) flightStart = now() - 1.5
         failText = message
@@ -228,6 +247,8 @@ internal class LaunchView(context: Context) : View(context) {
     fun reset() {
         phase = Phase.IDLE
         stats = null
+        copiedMessages = 0
+        receivedFiles = 0
         sliderPos = 0f
         returnAt = now()
         animUntil = returnAt + 0.9
@@ -241,7 +262,7 @@ internal class LaunchView(context: Context) : View(context) {
 
     private class L {
         var u = 1f; var w = 0f; var h = 0f; var cx = 0f
-        val gear = RectF(); val choose = RectF(); val summary = RectF(); val clear = RectF()
+        val gear = RectF(); val choose = RectF(); val textAction = RectF(); val summary = RectF(); val clear = RectF()
         val target = RectF(); val track = RectF(); val thumb = RectF()
         val card = RectF(); val ok = RectF(); val cancel = RectF(); val sheet = RectF()
         var minX = 0f; var travel = 0f
@@ -268,6 +289,8 @@ internal class LaunchView(context: Context) : View(context) {
         l.thumb.set(tx, l.track.top + 4 * u, tx + th, l.track.top + 4 * u + th)
         l.target.set(l.cx - colW / 2, l.track.top - 12 * u - 34 * u, l.cx + colW / 2, l.track.top - 12 * u)
         l.summary.set(l.cx - colW / 2, l.target.top - 10 * u - 48 * u, l.cx + colW / 2, l.target.top - 10 * u)
+        val actionBottom = if (fileCount > 0 || selText != null) l.summary.top - 4 * u else l.choose.top - 4 * u
+        l.textAction.set(l.cx - 90 * u, actionBottom - 36 * u, l.cx + 90 * u, actionBottom)
         l.clear.set(l.summary.right - 44 * u, l.summary.top + 2 * u, l.summary.right - 2 * u, l.summary.bottom - 2 * u)
         val rh = min(fh * .38f, fw * .80f / (SPRITE_W / SPRITE_H))
         l.rocketH = rh; l.rocketW = rh * SPRITE_W / SPRITE_H
@@ -304,7 +327,7 @@ internal class LaunchView(context: Context) : View(context) {
             sliderPos = springFrom * (1 - ease(k.toDouble()).toFloat())
             if (k >= 1) { sliderPos = 0f; springing = false }
         }
-        val selT = if (fileCount > 0) 1f else 0f
+        val selT = if (fileCount > 0 || selText != null) 1f else 0f
         selA = approach(selA, selT, (dt * 5).toFloat())
         displayProgress += (progress - displayProgress) * (1 - Math.exp(-6 * dt)).toFloat()
         if (phase == Phase.DEPARTING && t - departAt >= 2.4) phase = Phase.OK
@@ -389,7 +412,7 @@ internal class LaunchView(context: Context) : View(context) {
 
     private fun animating(t: Double): Boolean = when (phase) {
         Phase.LAUNCHING, Phase.FLYING, Phase.DEPARTING -> true
-        else -> dragging || springing || selA != (if (fileCount > 0) 1f else 0f) || t < animUntil ||
+        else -> dragging || springing || selA != (if (fileCount > 0 || selText != null) 1f else 0f) || t < animUntil ||
             parts.isNotEmpty() || thrust > .01f || streak > .01f
     }
 
@@ -630,9 +653,12 @@ internal class LaunchView(context: Context) : View(context) {
             drawTargetChip(c, l, t, fa)
             drawSlider(c, l, fa)
         }
+        txt(c, context.getString(R.string.send_text), l.textAction.centerX(), l.textAction.centerY(),
+            14f, 500, if (pressed == H_TEXT) Pal.white else Pal.muted, a, 1, u)
     }
 
     private fun summaryLabel(): String {
+        selText?.let { return "${context.getString(R.string.message_preview)} · $it" }
         val size = context.readableBytes(selBytes)
         return if (fileCount == 1 && selName != null) "$selName · $size" else "${context.fileCount(fileCount)} · $size"
     }
@@ -738,21 +764,35 @@ internal class LaunchView(context: Context) : View(context) {
             paint.alpha = (a * 255).toInt(); c.drawCircle(bx, by, 30 * u, paint); paint.shader = null; paint.alpha = 255
             line(c, bx - 11 * u, by + 1 * u, bx - 3.5f * u, by + 8.5f * u, 4.2f * u, Pal.white, a)
             line(c, bx - 3.5f * u, by + 8.5f * u, bx + 12 * u, by - 8 * u, 4.2f * u, Pal.white, a)
-            txt(c, context.getString(R.string.delivered), cx, r.top + 118 * u * scale, 28f, 700, Pal.white, a, 1, u)
-            txt(c, context.getString(if (incoming) R.string.files_received_title else R.string.files_sent_title),
-                cx, r.top + 146 * u * scale, 14.5f, 400, Pal.muted, a, 1, u)
-            val s = stats
-            val values = listOf(s?.completed?.toString() ?: "0", context.readableBytes(s?.bytes ?: 0),
-                context.readableTime(s?.elapsedNanos ?: 0), context.readableSpeed((s?.bytesPerSecond ?: 0.0).toLong()))
-            val labels = listOf(R.string.card_files, R.string.card_transferred, R.string.card_time, R.string.card_speed)
-            val gap = 10 * u; val tw = (r.width() - 44 * u - gap) / 2; val th = 68 * u * scale
-            for (i in values.indices) {
-                val tx = r.left + 22 * u + (i % 2) * (tw + gap)
-                val ty = r.top + 172 * u * scale + (i / 2) * (th + gap)
-                rect.set(tx, ty, tx + tw, ty + th)
-                pill(c, rect, Pal.white, .06f * a, 18 * u)
-                txt(c, values[i], tx + tw / 2, ty + th * .40f, 21f, 700, Pal.white, a, 1, u, tw - 20 * u)
-                txt(c, context.getString(labels[i]), tx + tw / 2, ty + th * .77f, 12f, 400, Pal.muted, a, 1, u)
+            if (copiedMessages > 0) {
+                val title = if (!incoming) R.string.message_sent else if (copiedMessages == 1)
+                    R.string.message_copied else R.string.messages_copied
+                txt(c, context.getString(title), cx, r.top + 118 * u * scale,
+                    26f, 700, Pal.white, a, 1, u, r.width() - 32 * u)
+                txt(c, context.getString(if (incoming) R.string.clipboard_ready else R.string.clipboard_pc),
+                    cx, r.top + 156 * u * scale,
+                    15f, 400, Pal.muted, a, 1, u)
+                if (copiedMessages > 1) txt(c, context.getString(R.string.messages_count, copiedMessages),
+                    cx, r.top + 202 * u * scale, 16f, 500, Pal.white, a, 1, u)
+                if (receivedFiles > 0) txt(c, context.getString(R.string.files_also_received, context.fileCount(receivedFiles)),
+                    cx, r.top + 242 * u * scale, 15f, 500, Pal.muted, a, 1, u, r.width() - 32 * u)
+            } else {
+                txt(c, context.getString(R.string.delivered), cx, r.top + 118 * u * scale, 28f, 700, Pal.white, a, 1, u)
+                txt(c, context.getString(if (incoming) R.string.files_received_title else R.string.files_sent_title),
+                    cx, r.top + 146 * u * scale, 14.5f, 400, Pal.muted, a, 1, u)
+                val s = stats
+                val values = listOf(s?.completed?.toString() ?: "0", context.readableBytes(s?.bytes ?: 0),
+                    context.readableTime(s?.elapsedNanos ?: 0), context.readableSpeed((s?.bytesPerSecond ?: 0.0).toLong()))
+                val labels = listOf(R.string.card_files, R.string.card_transferred, R.string.card_time, R.string.card_speed)
+                val gap = 10 * u; val tw = (r.width() - 44 * u - gap) / 2; val th = 68 * u * scale
+                for (i in values.indices) {
+                    val tx = r.left + 22 * u + (i % 2) * (tw + gap)
+                    val ty = r.top + 172 * u * scale + (i / 2) * (th + gap)
+                    rect.set(tx, ty, tx + tw, ty + th)
+                    pill(c, rect, Pal.white, .06f * a, 18 * u)
+                    txt(c, values[i], tx + tw / 2, ty + th * .40f, 21f, 700, Pal.white, a, 1, u, tw - 20 * u)
+                    txt(c, context.getString(labels[i]), tx + tw / 2, ty + th * .77f, 12f, 400, Pal.muted, a, 1, u)
+                }
             }
         } else {
             glow(c, bx, by, 70 * u, Pal.bad, .35f * a, unitGlow)
@@ -773,7 +813,8 @@ internal class LaunchView(context: Context) : View(context) {
                 line = word
             }
             if (line.isNotEmpty() && row < 4) txt(c, line, cx, r.top + 156 * u * scale + row * 24 * u, 15f, 400, Pal.muted, a, 1, u, r.width() - 56 * u)
-            txt(c, context.getString(R.string.files_kept), cx, r.bottom - 112 * u * scale, 13f, 400, Pal.dim, a, 1, u)
+            txt(c, context.getString(if (selText != null) R.string.message_kept else R.string.files_kept),
+                cx, r.bottom - 112 * u * scale, 13f, 400, Pal.dim, a, 1, u)
         }
         if (phase == Phase.OK || phase == Phase.FAIL || phase == Phase.DEPARTING && a > .7f) {
             primaryButton(c, l.ok, context.getString(R.string.ok), u, H_OK, a)
@@ -792,6 +833,7 @@ internal class LaunchView(context: Context) : View(context) {
             Phase.IDLE -> when {
                 uiAlpha(now()) < .5f -> H_NONE
                 l.gear.contains(x, y) -> H_GEAR
+                l.textAction.contains(x, y) -> H_TEXT
                 selA < .5f -> if (l.choose.contains(x, y)) H_CHOOSE else H_NONE
                 l.clear.contains(x, y) -> H_CLEAR
                 l.summary.contains(x, y) -> H_SUMMARY
@@ -855,6 +897,7 @@ internal class LaunchView(context: Context) : View(context) {
         when {
             id == H_GEAR -> h.onSettings()
             id == H_CHOOSE || id == H_SUMMARY -> h.onChoose()
+            id == H_TEXT -> h.onComposeText()
             id == H_CLEAR -> h.onClear()
             id == H_TARGET -> h.onTarget()
             id == H_CANCEL -> h.onCancel()
@@ -942,6 +985,7 @@ internal class LaunchView(context: Context) : View(context) {
         const val H_OK = 6
         const val H_CANCEL = 7
         const val H_SHEET_OUT = 8
+        const val H_TEXT = 9
         const val H_PHONE = 100
 
         fun ease(t: Double): Double { val k = t.coerceIn(0.0, 1.0); return 1 - (1 - k).pow(3) }

@@ -18,6 +18,26 @@ func TestZeroLengthFileResponseIncludesSize(t *testing.T) {
 	}
 }
 
+func TestTextFrames(t *testing.T) {
+	var b bytes.Buffer
+	req := Request{V: 1, Cmd: "put-text", Text: "你好 rocket"}
+	if err := Write(&b, req); err != nil {
+		t.Fatal(err)
+	}
+	var got Request
+	if err := Read(&b, &got); err != nil || got != req {
+		t.Fatalf("request: %+v %v", got, err)
+	}
+	resp := Response{OK: true, Offers: []Offer{}, Texts: []Text{{ID: "0123456789abcdef0123456789abcdef", Text: "你好 rocket"}}}
+	if err := Write(&b, resp); err != nil {
+		t.Fatal(err)
+	}
+	var result Response
+	if err := Read(&b, &result); err != nil || len(result.Texts) != 1 || result.Texts[0] != resp.Texts[0] || result.Offers == nil {
+		t.Fatalf("poll response: %+v", result)
+	}
+}
+
 func TestFrames(t *testing.T) {
 	var b bytes.Buffer
 	if err := Write(&b, Request{V: 1, Cmd: "ping"}); err != nil {

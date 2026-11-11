@@ -28,6 +28,7 @@ type Server struct {
 	Name        string
 	ID          string
 	OnEvent     func(desktop.Event)
+	OnText      func(string) error // called before acknowledging an incoming clipboard message.
 	Outbox      *outbox.Registry
 }
 
@@ -54,8 +55,14 @@ func (s Server) Serve(ln net.Listener) error {
 func (s Server) Handle(conn net.Conn) {
 	defer conn.Close()
 	stats := sessionStats{send: s.OnEvent, id: nextSessionID.Add(1)}
+	// Text and file batches can share one connection, but their UI sessions
+	// must not mix file counts, byte totals or the clipboard-only marker.
+	textStats := sessionStats{send: s.OnEvent, id: nextSessionID.Add(1), text: true}
 	var sessionError error
-	defer func() { stats.finish(sessionError) }()
+	defer func() {
+		stats.finish(sessionError)
+		textStats.finish(sessionError)
+	}()
 	remote, ok := conn.RemoteAddr().(*net.TCPAddr)
 	if !ok || !(remote.IP.IsPrivate() || remote.IP.IsLoopback() || remote.IP.IsLinkLocalUnicast()) {
 		return // Rocket only serves local/private IPv4 networks, never a public client.
@@ -85,6 +92,10 @@ func (s Server) Handle(conn net.Conn) {
 			err = s.poll(conn, req)
 		case "put":
 			err = s.put(conn, req, &stats)
+		case "put-text":
+			err = s.putText(conn, req, &textStats)
+		case "text-done":
+			err = s.textDone(conn, req, &textStats)
 		case "offer-get":
 			err = s.offerGet(conn, req, &stats)
 		case "offer-done":

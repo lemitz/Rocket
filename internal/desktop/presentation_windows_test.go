@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -54,7 +55,8 @@ func testWindow(width, height int, russian bool) (*window, *time.Time) {
 	now := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
 	w := newWindow(Options{
 		Name: "DESKTOP-ROCKET", UDPOnline: true, Addresses: []string{"Wi-Fi  192.168.1.23:42070", "Ethernet  10.0.0.7:42070"},
-		Queue: func(string, []string) (string, error) { return "", nil },
+		Queue:     func(string, []string) (string, error) { return "", nil },
+		QueueText: func(string, string) (string, error) { return "", nil },
 	})
 	w.russian = russian
 	w.width, w.height = width, height
@@ -152,6 +154,15 @@ func TestRenderStates(t *testing.T) {
 		w.fwState = fwMissing
 		w.opts.FixFirewall = func() error { return nil }
 		snap("13-settings-fw")
+
+		w.screen, w.state, w.currentSession = scMain, idle, 0
+		w.paths, w.sizes, w.message = nil, nil, "Привет, Rocket! 🚀\nДве строки"
+		step(w, now, time.Second)
+		snap("14-text-selected")
+		w.onEvent(Event{SessionID: 8, Kind: "start", Direction: "outgoing", Text: true, Total: int64(len(w.message))})
+		w.onEvent(Event{SessionID: 8, Kind: "complete", Direction: "outgoing", Text: true, Files: 1, Bytes: int64(len(w.message))})
+		step(w, now, 2600*time.Millisecond)
+		snap("15-text-result")
 	}
 	// A wide window keeps the portrait layout centred.
 	w, now := testWindow(1100, 760, false)
@@ -159,6 +170,17 @@ func TestRenderStates(t *testing.T) {
 	w.paths, w.sizes = []string{`C:\a\x.txt`}, []int64{1000}
 	step(w, now, time.Second)
 	dump(t, w, dir, "en-wide-selected")
+	for _, ru := range []bool{false, true} {
+		compact, _ := testWindow(398, 709, ru)
+		compact.state = resultOK
+		compact.current = Event{Direction: "incoming", Text: true, Files: 1}
+		tag := "en"
+		if ru {
+			tag = "ru"
+		}
+		dump(t, compact, dir, tag+"-compact-clipboard-result")
+		compact.ts.close()
+	}
 }
 
 // Frame cost bounds the refresh rate the software renderer can sustain: 8.3 ms per
@@ -210,6 +232,66 @@ func TestSliderLaunchesOnlyWithTarget(t *testing.T) {
 	w.releaseSlider()
 	if w.state != launching {
 		t.Fatalf("a full drag must launch, state=%v", w.state)
+	}
+}
+
+func TestTextSelectionNeedsLaunchAndTarget(t *testing.T) {
+	w, _ := testWindow(440, 780, false)
+	defer w.ts.close()
+	w.message = "Привет!\nRocket"
+	if !w.canLaunch() || w.selTarget() != 1 || w.summaryText() != "Message: Привет! Rocket" {
+		t.Fatalf("staged text must show a preview and enable launch: %q", w.summaryText())
+	}
+	w.selectedPhone = ""
+	if w.canLaunch() {
+		t.Fatal("text must not launch without a target")
+	}
+	w.selectedPhone = w.phones[0].ID
+	w.setPaths([]string{filepath.Join(t.TempDir(), "not-there")})
+	// A failed file selection must leave the previously staged text unchanged.
+	if w.message == "" {
+		t.Fatal("failed file selection cleared a text draft")
+	}
+	w.onEvent(Event{SessionID: 9, Kind: "start", Text: true, Direction: "incoming"})
+	w.onEvent(Event{SessionID: 9, Kind: "complete", Text: true, Direction: "incoming", Files: 1, Bytes: 8})
+	if !w.current.Text || w.state != departing {
+		t.Fatal("incoming text result must be distinguished from files")
+	}
+}
+
+func TestIncomingClipboardResultHitAndTitle(t *testing.T) {
+	for _, width := range []int{340, 398, 440} {
+		for _, russian := range []bool{false, true} {
+			w, _ := testWindow(width, 709, russian)
+			w.state = resultOK
+			w.current = Event{Direction: "incoming", Text: true, Files: 1}
+			l := w.layout()
+			if w.showOpenFolder() || l.openOut.w != 0 || w.hit(l.ok.x+l.ok.w/2, l.ok.y+l.ok.h/2) != hOK {
+				t.Fatalf("clipboard OK was not a dismiss button at %dpx, ru=%v", width, russian)
+			}
+			title := w.tr("Message copied to clipboard")
+			maxWidth, fontSize := int(l.card.w-48*l.u), int(25*l.u+.5)
+			lines := w.ts.wrap(title, maxWidth, fontSize, 700, 2)
+			if strings.Join(lines, " ") != title {
+				t.Errorf("truncated clipboard title at %dpx ru=%v: %q", width, russian, lines)
+			}
+			for _, line := range lines {
+				if w.ts.width(line, fontSize, 700) > maxWidth {
+					t.Errorf("clipboard title overflows at %dpx ru=%v: %q", width, russian, line)
+				}
+			}
+			w.dismiss()
+			if w.state != idle {
+				t.Fatal("dismissing a clipboard result must return to the main screen")
+			}
+			w.state, w.current = resultOK, Event{Direction: "incoming", Files: 1}
+			l = w.layout()
+			if !w.showOpenFolder() || w.hit(l.openOut.x+l.openOut.w/2, l.openOut.y+l.openOut.h/2) != hOpenOut ||
+				w.hit(l.ok.x+l.ok.w/2, l.ok.y+l.ok.h/2) != hOK {
+				t.Fatal("file result must keep separate Open folder and OK buttons")
+			}
+			w.ts.close()
+		}
 	}
 }
 

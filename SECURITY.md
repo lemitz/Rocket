@@ -4,11 +4,11 @@
 
 Rocket is built for a **trusted local network** (your home or office Wi-Fi) and deliberately has **no encryption, passwords or authentication**. This is a design decision, not a bug:
 
-- Anyone who can reach the PC on TCP 42070 can send it a file (it lands in the receive folder, never outside it, and never overwrites an existing file) and can pretend to be a phone.
+- Anyone who can reach the PC on TCP 42070 can send it a file (it lands in the receive folder, never outside it, and never overwrites an existing file), or send a `put-text` message that replaces the **Windows clipboard when the GUI is open**, and can pretend to be a phone.
 - Device IDs are public labels used to pick and match devices. They are **not** credentials.
 - CRC32C detects accidental corruption only; it protects against nothing malicious.
 - The PC serves only private, loopback or link-local clients, and the optional firewall rules (`rocket.exe firewall install`) are limited to the Private profile and the local subnet. Neither identifies a device.
-- The PC never offers a listing of its files, and an arbitrary path cannot be requested: only files you explicitly picked and addressed to a specific phone can be fetched, for 30 minutes at most.
+- The PC never offers a listing of its files, and an arbitrary path cannot be requested: only files or short text messages you explicitly selected and addressed to a phone can be fetched, for 30 minutes at most. Messages are visible on the wire without encryption; another LAN client spoofing the phone ID could read them or acknowledge them in its place. The PC in daemon-only mode rejects text (no GUI clipboard).
 
 Do not run Rocket on public or untrusted Wi-Fi, and do not expose TCP 42070 or UDP 42069 to the internet.
 

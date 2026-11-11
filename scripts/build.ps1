@@ -37,7 +37,7 @@ if (-not $SkipAndroid) {
     Copy-Item (Join-Path $root 'android/app/build/outputs/apk/release/app-release.apk') (Join-Path $dist "Rocket-$version-android.apk") -Force
 }
 
-$hashes = Get-ChildItem $dist -File | Where-Object { $_.Name -like 'Rocket-*' } | Sort-Object Name | ForEach-Object {
+$hashes = Get-ChildItem $dist -File | Where-Object { $_.Name -like "Rocket-$version-*" } | Sort-Object Name | ForEach-Object {
     "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
 }
 [IO.File]::WriteAllText((Join-Path $dist 'SHA256SUMS.txt'), ($hashes -join "`n") + "`n", [Text.Encoding]::ASCII)

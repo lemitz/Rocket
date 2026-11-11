@@ -5,12 +5,12 @@
 <h1 align="center">Rocket</h1>
 
 <p align="center">
-  Move files between your Windows PC and your Android phone over Wi-Fi: pick files, slide, fly.<br>
+  Move files and short text between your Windows PC and Android phone over Wi-Fi: pick, slide, fly.<br>
   One screen with a rocket and a few buttons, on both devices. No accounts, no cloud, no telemetry, no nonsense.
 </p>
 
 <p align="center">
-  <a href="https://github.com/lemitz/Rocket/releases"><img src="https://img.shields.io/badge/version-0.2.0-8b8cff" alt="Version 0.2.0"></a>
+  <a href="https://github.com/lemitz/Rocket/releases"><img src="https://img.shields.io/badge/version-0.3.0-8b8cff" alt="Version 0.3.0"></a>
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078d4" alt="Windows 10 / 11 x64">
   <img src="https://img.shields.io/badge/platform-Android%2014%2B-3ddc84" alt="Android 14+">
   <img src="https://img.shields.io/badge/built%20with-Go%20%2B%20Kotlin-00add8" alt="Go and Kotlin">
@@ -24,7 +24,7 @@
 
 ---
 
-Rocket does one thing: it sends the files you pick on one device to the other one, as directly as possible. You pick the files, drag the **Let's go!** slider to the right, the controls fade away and the rocket takes off. When the last file has arrived and been verified, the rocket leaves through the top of the screen and the numbers - files, size, time, average speed - appear out of the smoke. That is the whole interface, and it is the same on the PC and on the phone. Everything you only need once (which PC, which folder, checks) lives behind the gear.
+Rocket sends files you pick and short text messages from one device to the other, as directly as possible. You pick the files, drag the **Let's go!** slider to the right, the controls fade away and the rocket takes off. When the last file has arrived and been verified, the rocket leaves through the top of the screen and the numbers - files, size, time, average speed - appear out of the smoke. That is the whole interface, and it is the same on the PC and on the phone. Everything you only need once (which PC, which folder, checks) lives behind the gear.
 
 It is two tiny apps, not a framework: a single Windows executable written in Go with only the standard library, and an Android app written in Kotlin with only platform APIs - no Compose, no AndroidX, no third-party libraries.
 
@@ -51,6 +51,11 @@ It is two tiny apps, not a framework: a single Windows executable written in Go 
 - The result card shows how many files arrived, how much data, how long it took and the average speed. The PC counts a file as delivered only after the phone confirms it
 - Two phones can send to the same PC at the same time; their statistics are never mixed
 
+**Short text (from v0.3.0)**
+- **PC → phone:** copy text in any Windows app, focus the Rocket main window and press **Ctrl+V**. A message preview appears; slide **Let's go!** to send it. The open phone receives it and automatically copies it to its clipboard for pasting elsewhere
+- **Phone → PC:** tap **Send text**, type or paste into the editor (or share text from another app), stage it and slide **Let's go!**. Rocket on the PC automatically copies it to the Windows clipboard
+- Text is not sent by merely copying or pasting: the sender must launch it. Messages are limited to 8192 UTF-8 bytes, live only in memory and aren't saved as files. Incoming text **replaces** the recipient's current clipboard. Android may show its own clipboard notification. Both apps must be updated for the new feature
+
 **Finding each other**
 - No pairing and no IP addresses to type: the phone finds the PC on the network by itself, and the PC sees every phone that has Rocket open
 - One device around: Rocket chooses it and remembers it. Several: you choose once, on the sender, with one tap, and that is remembered too
@@ -72,13 +77,14 @@ It is two tiny apps, not a framework: a single Windows executable written in Go 
 - No telemetry and no internet access: Rocket only speaks to devices on your local network
 - On Android no broad storage permission is requested: files are read through the system picker and saved to `Download` through MediaStore (or a folder you grant)
 
-> **No encryption, no passwords.** Rocket is made for a network you trust, such as your home Wi-Fi. Anyone on that network could send files to your PC. Do not use it on public Wi-Fi. See [SECURITY.md](SECURITY.md).
+> **No encryption, no passwords.** Rocket is made for a network you trust, such as your home Wi-Fi. Anyone on that network could send files **or text that overwrites your clipboard** to your PC. Do not use it on public Wi-Fi. See [SECURITY.md](SECURITY.md).
 
 ## How to use
 
 1. Run `Rocket-<version>-win-x64.exe` on the PC and install `Rocket-<version>-android.apk` on the phone. Keep both open while you transfer.
 2. **Phone to PC:** on the phone press *Choose files*, slide **Let's go!**
 3. **PC to phone:** on the PC press *Choose files* or drop files on the window, make sure the phone is shown in the *To …* line, slide **Let's go!** The phone must be open with its screen on.
+4. **Text:** on the PC press **Ctrl+V** in the focused Rocket main window; on the phone tap **Send text** and paste/type (or share text to Rocket). Check the preview, then slide **Let's go!**. The receiver's clipboard is updated automatically; use Paste in any app.
 
 Slide to the right far enough (about 85%) and release; let go earlier and the slider springs back. *Cancel* appears quietly under the flying rocket on the phone, and the Back button cancels too.
 
@@ -88,11 +94,11 @@ Download the files from the [Releases](https://github.com/lemitz/Rocket/releases
 
 - **Windows:** `Rocket-<version>-win-x64.exe` - nothing to install. The first time Windows SmartScreen may warn about an unsigned app: *More info* → *Run anyway*. Windows 10 or 11, 64-bit.
 - **Android:** `Rocket-<version>-android.apk` - open it on the phone and allow installing from your browser or file manager. Android 14 or newer.
-- `SHA256SUMS.txt` - checksums. In PowerShell: `Get-FileHash .\Rocket-0.2.0-win-x64.exe -Algorithm SHA256`.
+- `SHA256SUMS.txt` - checksums. In PowerShell: `Get-FileHash .\Rocket-0.3.0-win-x64.exe -Algorithm SHA256`.
 
 **Windows firewall:** the PC has to accept connections from the phone. On first use open the gear and press **Fix** next to *Firewall* (Windows asks for permission once), or run `rocket.exe firewall install` from an administrator terminal. It opens TCP 42070 and UDP 42069 for the **Private** network profile and the local subnet only; Rocket never changes firewall rules on its own. Also check that the PC's network profile is *Private* and that the Wi-Fi has no client isolation.
 
-Rocket does not update itself. APKs signed with a different key cannot be installed over each other; see [Releasing](#releasing) if you build your own.
+Rocket does not update itself. **The release APK is currently signed with an ephemeral CI debug key**, so v0.3.0 may not install over v0.2.0: Android may require uninstalling the older APK first (which removes saved Rocket PC/folder settings). Do not uninstall until you are ready to set them up again. See [Releasing](#releasing) for persistent signing.
 
 ## Development
 
@@ -146,8 +152,8 @@ scripts/                   build.ps1, check-release.ps1, make-keystore.ps1
 cmd/rocket/                entry point, CLI (daemon, firewall, settings), Windows resources (icon, manifest)
 internal/
   wire/                    protocol frames
-  server/                  TCP sessions: put, poll, offer-get, offer-done, transfer statistics
-  outbox/                  files the PC addressed to phones (kept in memory)
+  server/                  TCP sessions: files, clipboard text, polling and transfer statistics
+  outbox/                  files and text addressed to phones (kept in memory)
   fsx/                     temporary files, safe names, publishing without overwriting
   discovery/               UDP answer for "who is here"
   config/                  settings, PC id, the Windows Downloads folder

@@ -75,6 +75,7 @@ type Request struct {
 	Device     string `json:"device,omitempty"`
 	DeviceName string `json:"device_name,omitempty"`
 	ID         string `json:"id,omitempty"`
+	Text       string `json:"text,omitempty"`
 }
 
 type Offer struct {
@@ -82,6 +83,11 @@ type Offer struct {
 	Name  string `json:"name"`
 	Size  int64  `json:"size"`
 	Mtime int64  `json:"mtime"`
+}
+
+type Text struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
 }
 
 type Response struct {
@@ -94,6 +100,7 @@ type Response struct {
 	Mtime  int64   `json:"mtime,omitempty"`
 	Hash   string  `json:"hash,omitempty"`
 	Offers []Offer `json:"offers"`
+	Texts  []Text  `json:"texts,omitempty"`
 	Offset int64   `json:"offset,omitempty"`
 }
 

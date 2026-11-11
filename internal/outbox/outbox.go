@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"rocket/internal/fsx"
 )
@@ -17,9 +18,13 @@ import (
 const onlineFor = 12 * time.Second
 const offerFor = 30 * time.Minute
 const maxOffers = 256
+const maxTexts = 256
+const maxPolledTexts = 32
+const MaxTextBytes = 8192
 const maxFileSize = 1 << 40
 
 var ErrNoOffer = errors.New("file is no longer available")
+var ErrNoText = errors.New("text is no longer available")
 
 type Phone struct {
 	ID       string
@@ -40,16 +45,28 @@ type item struct {
 	created time.Time
 }
 
+// Text is a transient clipboard message; its contents are never written to disk.
+type Text struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+type textItem struct {
+	Text
+	created time.Time
+}
+
 // Registry is a transient per-PC outbox. Paths remain on the original disk;
 // only phones with Rocket open report themselves online. IDs are labels, not auth.
 type Registry struct {
 	mu     sync.Mutex
 	phones map[string]Phone
 	items  map[string][]item
+	texts  map[string][]textItem
 }
 
 func New() *Registry {
-	return &Registry{phones: make(map[string]Phone), items: make(map[string][]item)}
+	return &Registry{phones: make(map[string]Phone), items: make(map[string][]item), texts: make(map[string][]textItem)}
 }
 
 func ValidID(id string) bool {
@@ -135,6 +152,76 @@ func (r *Registry) Queue(device string, paths []string) (string, error) {
 	return "", nil // The desktop localizes the queued status for the OS UI language.
 }
 
+// QueueText queues a clipboard message for an online phone. The returned ID
+// belongs only to that destination; the message expires after 30 minutes.
+func (r *Registry) QueueText(device, text string) (string, error) {
+	if !ValidID(device) || len(text) == 0 || len(text) > MaxTextBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+		return "", errors.New("invalid text or phone identity")
+	}
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(token[:])
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupLocked()
+	phone, ok := r.phones[device]
+	if !ok || time.Since(phone.LastSeen) >= onlineFor {
+		return "", errors.New("phone is offline; open Rocket on the destination phone")
+	}
+	if len(r.texts[device]) >= maxTexts {
+		return "", errors.New("too many texts already waiting for this phone")
+	}
+	r.texts[device] = append(r.texts[device], textItem{Text: Text{ID: id, Text: text}, created: time.Now()})
+	return id, nil
+}
+
+// Texts returns a bounded FIFO view of messages addressed to this phone.
+// The server may further limit a poll to fit the 64 KiB frame.
+func (r *Registry) Texts(device string) []Text {
+	if !ValidID(device) {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupLocked()
+	result := make([]Text, 0, min(len(r.texts[device]), maxPolledTexts))
+	for _, it := range r.texts[device] {
+		if len(result) == maxPolledTexts {
+			break
+		}
+		result = append(result, it.Text)
+	}
+	return result
+}
+
+// DoneText acknowledges clipboard publication, not merely receipt of a poll.
+// It returns the byte count for session statistics, without exposing the text.
+func (r *Registry) DoneText(device, id string) (int, error) {
+	if !ValidID(device) || !ValidID(id) {
+		return 0, ErrNoText
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupLocked()
+	for i, it := range r.texts[device] {
+		if it.ID == id {
+			list := r.texts[device]
+			n := len(it.Text.Text)
+			list = append(list[:i], list[i+1:]...)
+			clear(list[len(list):cap(list)])
+			if len(list) == 0 {
+				delete(r.texts, device)
+			} else {
+				r.texts[device] = list
+			}
+			return n, nil
+		}
+	}
+	return 0, ErrNoText
+}
+
 func (r *Registry) Open(device, id string) (*os.File, os.FileInfo, error) {
 	if !ValidID(device) || !ValidID(id) {
 		return nil, nil, ErrNoOffer
@@ -180,11 +267,12 @@ func (r *Registry) Done(device, id string) error {
 	return ErrNoOffer
 }
 
-// Drop forgets every file still waiting for the phone, e.g. after a failed or abandoned launch.
+// Drop forgets everything still waiting for the phone, e.g. after an abandoned launch.
 func (r *Registry) Drop(device string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.items, device)
+	delete(r.texts, device)
 }
 
 func (r *Registry) cleanupLocked() {
@@ -197,10 +285,25 @@ func (r *Registry) cleanupLocked() {
 		}
 		r.items[id] = kept
 	}
+	for id, entries := range r.texts {
+		kept := entries[:0]
+		for _, it := range entries {
+			if time.Since(it.created) < offerFor {
+				kept = append(kept, it)
+			}
+		}
+		clear(kept[len(kept):cap(kept)])
+		if len(kept) == 0 {
+			delete(r.texts, id)
+		} else {
+			r.texts[id] = kept
+		}
+	}
 	for id, phone := range r.phones {
 		if time.Since(phone.LastSeen) > 24*time.Hour {
 			delete(r.phones, id)
 			delete(r.items, id)
+			delete(r.texts, id)
 		}
 	}
 }

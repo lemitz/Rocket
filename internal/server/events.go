@@ -21,6 +21,7 @@ type sessionStats struct {
 	bytes     int64
 	total     int64
 	files     int
+	text      bool
 }
 
 func (s *sessionStats) begin(direction, name string, total int64) {
@@ -89,7 +90,7 @@ func (s *sessionStats) emit(kind, message string) {
 		SessionID: s.id,
 		Kind:      kind, Direction: s.direction, Name: s.name,
 		Bytes: s.bytes, Total: s.total, Files: s.files,
-		Duration: time.Since(s.started), Message: message,
+		Duration: time.Since(s.started), Message: message, Text: s.text,
 	})
 }
 

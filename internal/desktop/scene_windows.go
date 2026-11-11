@@ -11,6 +11,7 @@ import (
 	"image/png"
 	"math"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -120,6 +121,12 @@ type layout struct {
 	rows                                 []rectF
 }
 
+// A clipboard message has no receive folder. Use the same condition for the
+// result layout, drawing, and hit testing so OK cannot act as Open folder.
+func (w *window) showOpenFolder() bool {
+	return w.state == resultOK && w.current.Direction == "incoming" && !w.current.Text
+}
+
 func (w *window) layout() layout {
 	fw, fh := float32(w.width), float32(w.height)
 	u := float32(math.Min(float64(fw)/420, float64(fh)/760))
@@ -147,8 +154,7 @@ func (w *window) layout() layout {
 	ch := 418 * u
 	l.card = rectF{l.cx - cw/2, max(24*u, fh*.47-ch/2), cw, ch}
 	l.ok = rectF{l.card.x + 22*u, l.card.y + l.card.h - 76*u, l.card.w - 44*u, 54 * u}
-	l.openOut = l.ok
-	if w.state == resultOK && w.current.Direction == "incoming" {
+	if w.showOpenFolder() {
 		half := (l.ok.w - 10*u) / 2
 		l.openOut = rectF{l.ok.x, l.ok.y, half, l.ok.h}
 		l.ok = rectF{l.ok.x + half + 10*u, l.ok.y, half, l.ok.h}
@@ -165,11 +171,12 @@ func (w *window) layout() layout {
 }
 
 func (w *window) canLaunch() bool {
-	return len(w.paths) > 0 && w.selectedPhone != "" && w.opts.Queue != nil && w.state == idle
+	return (len(w.paths) > 0 && w.opts.Queue != nil || w.message != "" && w.opts.QueueText != nil) &&
+		w.selectedPhone != "" && w.state == idle
 }
 
 func (w *window) selTarget() float64 {
-	if len(w.paths) > 0 {
+	if len(w.paths) > 0 || w.message != "" {
 		return 1
 	}
 	return 0
@@ -642,7 +649,10 @@ func (w *window) drawIdleUI(s *surface, l layout, now time.Time, a float32) {
 		bo := a * (1 - fileA)
 		w.button(s, l.choose, w.tr("Choose files"), u, true, hChoose, bo, false)
 		if w.opts.Queue != nil {
-			w.txt(s, w.tr("or drop files here"), l.cx, l.choose.y+l.choose.h+22*u, 12.5, 400, cDim, bo, 1, l)
+			w.txt(s, w.tr("or drop files here"), l.cx, l.choose.y+l.choose.h+15*u, 12.5, 400, cDim, bo, 1, l)
+		}
+		if w.opts.QueueText != nil {
+			w.txt(s, w.tr("Ctrl+V to paste text"), l.cx, l.choose.y+l.choose.h+32*u, 12.5, 400, cDim, bo, 1, l)
 		}
 	}
 	if fileA > 0 {
@@ -684,6 +694,15 @@ func (w *window) drawSummary(s *surface, l layout, a float32) {
 }
 
 func (w *window) summaryText() string {
+	if w.message != "" {
+		preview := strings.Map(func(r rune) rune {
+			if r < 32 || r == 127 {
+				return ' '
+			}
+			return r
+		}, w.message)
+		return w.tr("Message") + ": " + preview
+	}
 	var total int64
 	for _, sz := range w.sizes {
 		total += sz
@@ -832,23 +851,54 @@ func (w *window) drawCard(s *surface, l layout, a, scale float32, ok bool) {
 		if w.current.Direction == "incoming" {
 			verb = w.tr("Files received")
 		}
-		w.txt(s, w.tr("Delivered!"), cx, r.y+118*u*scale, 28, 700, cWhite, a, 1, l)
-		w.txt(s, verb, cx, r.y+146*u*scale, 14.5, 400, cMuted, a, 1, l)
-		bytes := w.current.Bytes
-		if bytes <= 0 && w.current.Total > 0 {
-			bytes = w.current.Total
+		if w.current.Text {
+			verb = w.tr("Message sent")
+			if w.current.Direction == "incoming" {
+				verb = w.tr("Message copied to clipboard")
+			}
 		}
-		values := []string{fmt.Sprintf("%d", max(0, w.current.Files)), w.byteSize(bytes), w.duration(w.current.Duration), w.speed(bytes, w.current.Duration)}
-		labels := []string{w.tr("Files"), w.tr("Size"), w.tr("Time"), w.tr("Avg. speed")}
-		gap := 10 * u
-		tw := (r.w - 44*u - gap) / 2
-		th := 66 * u * scale
-		for i := range values {
-			tx := r.x + 22*u + float32(i%2)*(tw+gap)
-			ty := r.y + 172*u*scale + float32(i/2)*(th+gap)
-			s.roundRect(tx, ty, tw, th, 18*u, solid(cWhite), .06*a)
-			w.txt(s, w.ts.fit(values[i], int(tw-20*u), int(21*u+.5), 700), tx+tw/2, ty+th*.40, 21, 700, cWhite, a, 1, l)
-			w.txt(s, labels[i], tx+tw/2, ty+th*.77, 12, 400, cMuted, a, 1, l)
+		if w.current.Text {
+			// Incoming titles are longer in both languages. Wrap them instead of
+			// ellipsizing the fact that the message reached the clipboard.
+			lines := w.ts.wrap(verb, int(r.w-48*u), int(25*u+.5), 700, 2)
+			for i, line := range lines {
+				y := r.y + 118*u*scale
+				if len(lines) > 1 {
+					y += (float32(i)*30 - 15) * u * scale
+				}
+				w.txt(s, line, cx, y, 25, 700, cWhite, a, 1, l)
+			}
+			detail := w.tr("Ready to paste on the phone")
+			if w.current.Direction == "incoming" {
+				detail = w.tr("Ready to paste on this PC")
+			}
+			detailY := r.y + 156*u*scale
+			if len(lines) > 1 {
+				detailY += 18 * u * scale
+			}
+			w.txt(s, w.ts.fit(detail, int(r.w-48*u), int(15*u+.5), 400), cx, detailY, 15, 400, cMuted, a, 1, l)
+			if w.current.Files > 1 {
+				w.txt(s, fmt.Sprintf("%d %s", w.current.Files, w.tr("messages")), cx, r.y+202*u*scale, 16, 500, cWhite, a, 1, l)
+			}
+		} else {
+			w.txt(s, w.tr("Delivered!"), cx, r.y+118*u*scale, 28, 700, cWhite, a, 1, l)
+			w.txt(s, verb, cx, r.y+146*u*scale, 14.5, 400, cMuted, a, 1, l)
+			bytes := w.current.Bytes
+			if bytes <= 0 && w.current.Total > 0 {
+				bytes = w.current.Total
+			}
+			values := []string{fmt.Sprintf("%d", max(0, w.current.Files)), w.byteSize(bytes), w.duration(w.current.Duration), w.speed(bytes, w.current.Duration)}
+			labels := []string{w.tr("Files"), w.tr("Size"), w.tr("Time"), w.tr("Avg. speed")}
+			gap := 10 * u
+			tw := (r.w - 44*u - gap) / 2
+			th := 66 * u * scale
+			for i := range values {
+				tx := r.x + 22*u + float32(i%2)*(tw+gap)
+				ty := r.y + 172*u*scale + float32(i/2)*(th+gap)
+				s.roundRect(tx, ty, tw, th, 18*u, solid(cWhite), .06*a)
+				w.txt(s, w.ts.fit(values[i], int(tw-20*u), int(21*u+.5), 700), tx+tw/2, ty+th*.40, 21, 700, cWhite, a, 1, l)
+				w.txt(s, labels[i], tx+tw/2, ty+th*.77, 12, 400, cMuted, a, 1, l)
+			}
 		}
 	} else {
 		s.glow(bx, by, 70*u, cBad, 0, .35*a)
@@ -859,10 +909,14 @@ func (w *window) drawCard(s *surface, l layout, a, scale float32, ok bool) {
 		for i, line := range w.ts.wrap(w.failMsg, int(r.w-56*u), int(15*u+.5), 400, 4) {
 			w.txt(s, line, cx, r.y+156*u*scale+float32(i)*24*u, 15, 400, cMuted, a, 1, l)
 		}
-		w.txt(s, w.tr("Your files are still selected."), cx, r.y+r.h-112*u*scale, 13, 400, cDim, a, 1, l)
+		selectedHint := w.tr("Your files are still selected.")
+		if w.message != "" || w.current.Text {
+			selectedHint = w.tr("Your message is still selected.")
+		}
+		w.txt(s, selectedHint, cx, r.y+r.h-112*u*scale, 13, 400, cDim, a, 1, l)
 	}
 	if l.ok.w > 0 && (w.state == resultOK || w.state == resultFail || w.state == departing && a > .7) {
-		if w.state == resultOK && w.current.Direction == "incoming" {
+		if w.showOpenFolder() {
 			w.button(s, l.openOut, w.tr("Open folder"), u, false, hOpenOut, a, false)
 		}
 		w.button(s, l.ok, w.tr("OK"), u, true, hOK, a, false)

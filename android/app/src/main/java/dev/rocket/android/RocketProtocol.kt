@@ -17,10 +17,25 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
+import java.nio.charset.CharacterCodingException
 import java.nio.charset.StandardCharsets
 import java.util.zip.CRC32C
 
 internal data class Offer(val id: String, val name: String, val size: Long, val mtime: Long)
+internal data class TextOffer(val id: String, val text: String)
+internal data class PollResult(val offers: List<Offer>, val texts: List<TextOffer>)
+
+/** Validate bytes, not Kotlin characters; reject malformed surrogate pairs rather than replacing them. */
+internal fun validMessage(text: String): Boolean {
+    if (text.isEmpty() || text.length > 8192 || '\u0000' in text) return false
+    return try {
+        val bytes = StandardCharsets.UTF_8.newEncoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .encode(java.nio.CharBuffer.wrap(text))
+        bytes.remaining() in 1..8192
+    } catch (_: CharacterCodingException) { false }
+}
 internal data class PcInfo(val name: String, val id: String?)
 internal data class UploadFile(val uri: Uri, val name: String, val size: Long)
 
@@ -98,9 +113,9 @@ internal class RocketProtocol(private val context: Context, ip: String, private 
     }
 
     private fun rejected(response: JSONObject, fallback: Int): Nothing {
-        // Remote daemon text is not localized; retain it only for debugging.
+        // A remote error can echo user text: never put the response body in logcat.
         if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
-            Log.w("RocketTransfer", "PC rejection: ${response.optString("error")}")
+            Log.w("RocketTransfer", "PC rejected request")
         throw RocketError(context.getString(fallback))
     }
 
@@ -122,12 +137,14 @@ internal class RocketProtocol(private val context: Context, ip: String, private 
         return PcInfo(name, id)
     }
 
-    fun poll(device: String, deviceName: String): List<Offer> {
+    fun poll(device: String, deviceName: String): PollResult {
         socket.soTimeout = 3000
         val response = request("poll", JSONObject().put("device", device).put("device_name", deviceName))
         val offers = response.getJSONArray("offers")
-        if (offers.length() > 1000) throw RocketError(context.getString(R.string.error_offers))
-        return (0 until offers.length()).map { index ->
+        val texts = if (response.has("texts")) response.getJSONArray("texts") else null
+        if (offers.length() > 1000 || (texts?.length() ?: 0) > 1000)
+            throw RocketError(context.getString(R.string.error_offers))
+        val files = (0 until offers.length()).map { index ->
             val item = offers.getJSONObject(index)
             val id = item.getString("id")
             val name = item.getString("name")
@@ -140,6 +157,26 @@ internal class RocketProtocol(private val context: Context, ip: String, private 
             }
             Offer(id, name, size, mtime)
         }.distinctBy { it.id }
+        val messages = (0 until (texts?.length() ?: 0)).map { index ->
+            val item = texts!!.getJSONObject(index)
+            val id = item.get("id") as? String ?: throw RocketError(context.getString(R.string.error_text_offer))
+            val text = item.get("text") as? String ?: throw RocketError(context.getString(R.string.error_text_offer))
+            if (id.isBlank() || id.length > 128 || !validMessage(text))
+                throw RocketError(context.getString(R.string.error_text_offer))
+            TextOffer(id, text)
+        }.distinctBy { it.id }
+        return PollResult(files, messages)
+    }
+
+    fun putText(text: String) {
+        if (!validMessage(text)) throw RocketError(context.getString(R.string.error_text_invalid))
+        socket.soTimeout = 120_000
+        request("put-text", JSONObject().put("text", text))
+    }
+
+    fun textDone(device: String, id: String) {
+        socket.soTimeout = 120_000
+        request("text-done", JSONObject().put("device", device).put("id", id))
     }
 
     fun offerGet(device: String, offer: Offer, store: DownloadStore,
