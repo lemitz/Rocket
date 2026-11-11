@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -54,6 +55,7 @@ var (
 	getDpiForWindow  = user32.NewProc("GetDpiForWindow")
 	getDpiForSystem  = user32.NewProc("GetDpiForSystem")
 	adjustWindowRect = user32.NewProc("AdjustWindowRectExForDpi")
+	getKeyState      = user32.NewProc("GetKeyState")
 
 	createCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
 	selectObject       = gdi32.NewProc("SelectObject")
@@ -147,6 +149,7 @@ type notification struct {
 	event  Event
 	folder string
 	status string
+	text   TextDelivery
 	ok     bool
 	err    error
 }
@@ -180,6 +183,7 @@ type window struct {
 	// selection and destination
 	paths         []string
 	sizes         []int64
+	message       string // staged clipboard text; never sent until Launch
 	phones        []Phone
 	selectedPhone string
 	sheetOpen     bool
@@ -312,6 +316,21 @@ func Run(events <-chan Event, opts Options) error {
 			}
 		}
 	}()
+	if opts.TextInbox != nil {
+		go func() {
+			for {
+				select {
+				case <-w.done:
+					return
+				case delivery, ok := <-opts.TextInbox:
+					if !ok {
+						return
+					}
+					w.enqueue(notification{kind: "text", text: delivery})
+				}
+			}
+		}()
+	}
 	var m msg
 	for {
 		// Drain queued input before drawing another frame. EndDraw provides the
@@ -590,10 +609,13 @@ func (w *window) drain() {
 			w.onEvent(n.event)
 		case "offline":
 			w.serverOnline = false
+		case "text":
+			err := writeClipboardText(w.hwnd, n.text.Text)
+			n.text.Done <- err
 		case "send":
 			if n.err != nil {
 				if w.state == launching {
-					w.fail(fmt.Sprintf(w.tr("Could not queue the files: %v"), n.err))
+					w.fail(w.tr("Could not queue this transfer. Try again."))
 				}
 			} else {
 				w.queued = true
@@ -681,7 +703,7 @@ func (w *window) onEvent(e Event) {
 		w.beginFlight(e)
 	case "progress":
 		if w.state != flying {
-			w.beginFlight(Event{SessionID: e.SessionID, Kind: "start", Direction: e.Direction, Name: e.Name})
+			w.beginFlight(Event{SessionID: e.SessionID, Kind: "start", Direction: e.Direction, Name: e.Name, Text: e.Text})
 		}
 		if e.Direction != "" {
 			w.current.Direction = e.Direction
@@ -690,6 +712,7 @@ func (w *window) onEvent(e Event) {
 			w.current.Name = e.Name
 		}
 		w.current.Bytes, w.current.Total, w.current.Files = e.Bytes, e.Total, e.Files
+		w.current.Text = e.Text
 	case "complete":
 		w.currentSession = e.SessionID
 		if w.state != flying && w.state != launching {
@@ -700,6 +723,9 @@ func (w *window) onEvent(e Event) {
 		}
 		if e.Direction == "" {
 			e.Direction = w.current.Direction
+		}
+		if w.current.Text {
+			e.Text = true
 		}
 		if e.Name == "" {
 			e.Name = w.current.Name
@@ -721,7 +747,7 @@ func (w *window) onEvent(e Event) {
 		w.state = departing
 		w.sheetOpen = false
 		if e.Direction == "outgoing" && w.queued {
-			w.paths, w.sizes = nil, nil // a fresh source selection is needed for the next launch
+			w.paths, w.sizes, w.message = nil, nil, "" // next launch needs a fresh selection
 			w.queued = false
 		}
 	case "error":
@@ -789,8 +815,34 @@ func (w *window) setPaths(paths []string) {
 		w.showToast(w.tr("Only regular files can be sent"))
 	}
 	w.paths, w.sizes = valid, sizes
+	w.message = ""
 	w.sl.pos = 0
 	w.syncPhones()
+}
+
+func (w *window) pasteText() {
+	text, err := readClipboardText(w.hwnd)
+	if err != nil {
+		w.showToast(w.tr("Clipboard has no short text to send"))
+		return
+	}
+	if text == "" || !utf8.ValidString(text) || len(text) > 8192 || containsNUL(text) {
+		w.showToast(w.tr("Text must be 1–8192 bytes"))
+		return
+	}
+	w.paths, w.sizes = nil, nil
+	w.message = text
+	w.sl.pos = 0
+	w.syncPhones()
+}
+
+func containsNUL(text string) bool {
+	for _, r := range text {
+		if r == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *window) drop(hdrop uintptr) {
@@ -919,7 +971,7 @@ func (w *window) hit(x, y float32) int {
 		if w.state == departing && w.frameTime().Sub(w.departAt) < 1300*time.Millisecond {
 			return hNone
 		}
-		if w.state == resultOK && w.current.Direction == "incoming" && l.openOut.contains(x, y) {
+		if w.showOpenFolder() && l.openOut.contains(x, y) {
 			return hOpenOut
 		}
 		if l.ok.contains(x, y) {
@@ -952,10 +1004,16 @@ func (w *window) launch() {
 	w.current = Event{}
 	w.returnAt = time.Time{}
 	w.launchDeadline = now.Add(60 * time.Second) // replaced once the queue call returns
-	phone, paths := w.selectedPhone, append([]string(nil), w.paths...)
-	queue := w.opts.Queue
+	phone, paths, message := w.selectedPhone, append([]string(nil), w.paths...), w.message
+	queue, queueText := w.opts.Queue, w.opts.QueueText
 	go func() {
-		status, err := queue(phone, paths)
+		var status string
+		var err error
+		if message != "" {
+			status, err = queueText(phone, message)
+		} else {
+			status, err = queue(phone, paths)
+		}
 		w.enqueue(notification{kind: "send", status: status, err: err})
 	}()
 }
@@ -974,7 +1032,7 @@ func (w *window) click(id int) {
 			w.setPaths(paths)
 		}
 	case id == hClear:
-		w.paths, w.sizes = nil, nil
+		w.paths, w.sizes, w.message = nil, nil, ""
 		w.sheetOpen = false
 	case id == hTarget:
 		w.sheetOpen = true
@@ -1036,6 +1094,14 @@ func (w *window) openFolder() {
 }
 
 func (w *window) key(vk uintptr) {
+	if vk == 'V' && w.state == idle && w.screen == scMain && !w.sheetOpen && w.opts.QueueText != nil {
+		ctrl, _, _ := getKeyState.Call(0x11) // VK_CONTROL; no global keyboard hook.
+		if ctrl&0x8000 != 0 {
+			w.pasteText()
+			w.invalidate()
+			return
+		}
+	}
 	switch vk {
 	case 0x1b: // Escape
 		switch {
@@ -1050,7 +1116,7 @@ func (w *window) key(vk uintptr) {
 		switch {
 		case w.state == resultOK || w.state == resultFail:
 			w.dismiss()
-		case w.state == idle && w.screen == scMain && len(w.paths) == 0:
+		case w.state == idle && w.screen == scMain && len(w.paths) == 0 && w.message == "":
 			w.click(hChoose)
 		}
 	}

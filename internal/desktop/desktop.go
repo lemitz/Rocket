@@ -16,6 +16,14 @@ type Event struct {
 	Files     int
 	Duration  time.Duration
 	Message   string
+	Text      bool // clipboard message rather than a file batch
+}
+
+// TextDelivery must be completed by the window thread after setting the clipboard.
+// Never send the message contents to logs or an on-disk file.
+type TextDelivery struct {
+	Text string
+	Done chan error
 }
 
 // Phone is a discovered destination available for sending files from this PC.
@@ -42,6 +50,10 @@ type Options struct {
 	// Queue receives local paths from the picker. The handler must revalidate
 	// each path as a regular file before queuing; its return value is UI status.
 	Queue func(phoneID string, paths []string) (string, error)
+	// QueueText offers a short message to the explicitly selected phone.
+	QueueText func(phoneID, text string) (string, error)
+	// TextInbox delivers phone messages to the window thread for clipboard access.
+	TextInbox <-chan TextDelivery
 	// Unqueue drops everything still waiting for a phone (launch failed or timed out).
 	Unqueue func(phoneID string)
 	// FirewallOK reports whether Rocket's inbound rules exist; FixFirewall installs them elevated.

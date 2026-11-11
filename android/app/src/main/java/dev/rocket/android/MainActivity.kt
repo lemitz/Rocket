@@ -2,6 +2,8 @@ package dev.rocket.android
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
@@ -32,6 +34,9 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONException
 
 internal class TransferTask(private val cancelledMessage: String) {
@@ -68,6 +73,7 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
     private lateinit var settings: SettingsPanel
     private val selected = mutableListOf<Uri>()
     private var uploads: List<UploadFile> = emptyList()
+    private var selectedText: String? = null
     private var selectionVersion = 0
     private var active: TransferTask? = null
     private var polling: TransferTask? = null
@@ -139,7 +145,7 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
     private fun pcKnown() = pcIp().isNotBlank() && !mismatchedPc
 
     private fun showSelection() {
-        scene.setSelection(uploads.size, uploads.sumOf { it.size }, uploads.singleOrNull()?.name)
+        scene.setSelection(uploads.size, uploads.sumOf { it.size }, uploads.singleOrNull()?.name, selectedText)
         updateTarget()
     }
 
@@ -156,13 +162,14 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
             candidates.size > 1 -> { label = getString(R.string.pc_pick); dot = Pal.warn; pickable = true }
             else -> { label = getString(R.string.pc_none); dot = Pal.warn; pickable = true }
         }
-        scene.setTarget(label, dot, pickable, known && uploads.isNotEmpty() && active == null)
+        scene.setTarget(label, dot, pickable, known && (uploads.isNotEmpty() || selectedText != null) && active == null)
     }
 
     private fun stageFiles(uris: List<Uri>) {
         if (active != null) return
         selectionVersion++
         val version = selectionVersion
+        selectedText = null
         selected.clear()
         selected.addAll(uris.distinct())
         uploads = emptyList()
@@ -183,6 +190,19 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
                 showSelection()
             }
         }.start()
+    }
+
+    private fun stageText(text: String) {
+        if (active != null) return
+        if (!validMessage(text)) {
+            Toast.makeText(this, R.string.error_text_invalid, Toast.LENGTH_LONG).show()
+            return
+        }
+        selectionVersion++
+        selected.clear()
+        uploads = emptyList()
+        selectedText = text
+        showSelection()
     }
 
     private fun userFacingError(error: Exception): String = when (error) {
@@ -208,9 +228,39 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
         }, PICK_FILES)
     }
 
+    override fun onComposeText() {
+        if (active != null) return
+        val edit = EditText(this).apply {
+            hint = getString(R.string.text_hint)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            minLines = 3
+            maxLines = 7
+            setText(selectedText.orEmpty())
+            setSelection(text.length)
+        }
+        val pad = (resources.displayMetrics.density * 20).toInt()
+        val holder = LinearLayout(this).apply { setPadding(pad, 0, pad, 0); addView(edit) }
+        val dialog = AlertDialog.Builder(this).setTitle(R.string.send_text).setView(holder)
+            .setPositiveButton(R.string.stage_message, null)
+            .setNegativeButton(android.R.string.cancel, null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val message = edit.text.toString()
+                if (!validMessage(message)) {
+                    edit.error = getString(R.string.error_text_invalid)
+                } else {
+                    stageText(message)
+                    dialog.dismiss()
+                }
+            }
+        }
+        dialog.show()
+    }
+
     override fun onClear() {
         selectionVersion++
-        selected.clear(); uploads = emptyList()
+        selected.clear(); uploads = emptyList(); selectedText = null
         showSelection()
     }
 
@@ -489,7 +539,7 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
     // ================================================================ transfers
 
     private fun runTransfer(incoming: Boolean, count: Int, existingTask: TransferTask? = null,
-                            onSuccess: (() -> Unit)? = null,
+                            onSuccess: (() -> Unit)? = null, onResult: (TransferSnapshot) -> Unit = scene::succeed,
                             operation: (TransferTask, TransferProgress) -> Unit) {
         if (active != null) return
         if (existingTask == null) { polling?.cancel(); polling = null }
@@ -520,7 +570,7 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
             catch (e: Exception) {
                 failure = e
                 if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 && !task.isCancelled())
-                    Log.w("RocketTransfer", "Operation failed (raw diagnostics)", e)
+                    Log.w("RocketTransfer", "Operation failed (${e.javaClass.simpleName})")
             }
             val snapshot = if (failure == null && !task.isCancelled()) progress.finish() else null
             main.post {
@@ -532,7 +582,7 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
                     failure != null -> {
                         scene.fail(userFacingError(checkNotNull(failure)))
                     }
-                    snapshot != null -> { scene.succeed(snapshot); onSuccess?.invoke() }
+                    snapshot != null -> { onResult(snapshot); onSuccess?.invoke() }
                 }
                 showSelection()
                 schedulePoll()
@@ -543,19 +593,27 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
     private fun sendSelected() {
         if (active != null) return
         val files = uploads.toList()
+        val message = selectedText
         val address = pcIp()
-        if (files.isEmpty() || address.isBlank() || mismatchedPc) return
-        runTransfer(false, files.size, onSuccess = {
+        if ((files.isEmpty() && message == null) || address.isBlank() || mismatchedPc) return
+        runTransfer(false, if (message != null) 1 else files.size, onSuccess = {
             selectionVersion++
             selected.clear()
             uploads = emptyList()
+            selectedText = null
+        }, onResult = { snapshot ->
+            if (message != null) scene.succeedText(1, 0) else scene.succeed(snapshot)
         }) { task, progress ->
-            progress.setTotal(files.map { it.size })
+            progress.setTotal(if (message != null) listOf(message.toByteArray(StandardCharsets.UTF_8).size.toLong())
+                else files.map { it.size })
             RocketProtocol(this, address, task).use { client ->
                 val expectedId = prefs.getString("last_id", null)
                 if (expectedId != null && client.ping().id != expectedId)
                     throw RocketError(getString(R.string.pc_id_mismatch))
-                for (file in files) {
+                if (message != null) {
+                    client.putText(message)
+                    progress.confirmed()
+                } else for (file in files) {
                     task.check()
                     client.put(contentResolver, file, progress::transferred)
                     progress.confirmed()
@@ -572,7 +630,7 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
         polling = task
         Thread {
             var client: RocketProtocol? = null
-            var offers: List<Offer> = emptyList()
+            var batch = PollResult(emptyList(), emptyList())
             var identityMismatch = false
             var unreachable = false
             try {
@@ -580,7 +638,7 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
                 val expectedId = prefs.getString("last_id", null)
                 if (expectedId != null && client.ping().id != expectedId)
                     throw RocketError(getString(R.string.pc_id_mismatch))
-                offers = client.poll(deviceId, deviceName)
+                batch = client.poll(deviceId, deviceName)
             } catch (e: Exception) {
                 // Network failures are expected during foreground polling; never prompt for them.
                 identityMismatch = e is RocketError && e.message == getString(R.string.pc_id_mismatch)
@@ -604,13 +662,13 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
                 if (polling !== task || !resumed || active != null || pcIp() != address || task.isCancelled()) {
                     client?.close()
                     if (polling === task) { polling = null; schedulePoll() }
-                } else if (offers.isEmpty()) {
+                } else if (batch.offers.isEmpty() && batch.texts.isEmpty()) {
                     client?.close()
                     polling = null
                     schedulePoll()
                 } else {
                     polling = null
-                    receiveOffers(task, checkNotNull(client), offers)
+                    receiveOffers(task, checkNotNull(client), batch)
                 }
             }
         }.start()
@@ -624,24 +682,63 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
         discoverPcs(true)
     }
 
-    private fun receiveOffers(task: TransferTask, client: RocketProtocol, offers: List<Offer>) {
+    private fun receiveOffers(task: TransferTask, client: RocketProtocol, batch: PollResult) {
         val tree = prefs.getString("tree", null)?.let(Uri::parse)
-        runTransfer(true, offers.size, existingTask = task) { _, progress ->
+        val offers = batch.offers
+        val texts = batch.texts
+        runTransfer(true, offers.size + texts.size, existingTask = task, onResult = { snapshot ->
+            if (texts.isNotEmpty()) scene.succeedText(texts.size, offers.size) else scene.succeed(snapshot)
+        }) { _, progress ->
             client.use { connection ->
                 val sizes = offers.map { it.size }.toMutableList()
                 progress.setTotal(sizes)
-                val store = DownloadStore(this, tree)
-                for ((index, offer) in offers.withIndex()) {
+                // Copy short messages first: a large offered file must not delay a new clipboard update.
+                // Each message is copied and confirmed in order; the latest remains in the clipboard.
+                for (message in texts) {
                     task.check()
-                    connection.offerGet(deviceId, offer, store,
-                        { size -> sizes[index] = size; progress.setTotal(sizes) }, progress::transferred)
+                    copyToClipboard(task, message.text)
                     task.check()
-                    // Only acknowledge after CRC32C, stream close and publication succeeded.
-                    connection.offerDone(deviceId, offer.id)
+                    // Socket errors must surface; a lost ACK can result in a second copy on the next poll.
+                    connection.textDone(deviceId, message.id)
                     progress.confirmed()
+                }
+                if (offers.isNotEmpty()) {
+                    val store = DownloadStore(this, tree)
+                    for ((index, offer) in offers.withIndex()) {
+                        task.check()
+                        connection.offerGet(deviceId, offer, store,
+                            { size -> sizes[index] = size; progress.setTotal(sizes) }, progress::transferred)
+                        task.check()
+                        // Only acknowledge after CRC32C, stream close and publication succeeded.
+                        connection.offerDone(deviceId, offer.id)
+                        progress.confirmed()
+                    }
                 }
             }
         }
+    }
+
+    /** Wait on the worker, never on the main thread. ACK only after Android accepted the clip. */
+    private fun copyToClipboard(task: TransferTask, text: String) {
+        val done = CountDownLatch(1)
+        val pending = AtomicBoolean(true)
+        var failure: Exception? = null
+        if (!main.post {
+            try {
+                task.check()
+                if (!pending.get() || !resumed || isDestroyed) throw RocketError(getString(R.string.error_clipboard))
+                val clipboard = getSystemService(ClipboardManager::class.java)
+                    ?: throw RocketError(getString(R.string.error_clipboard))
+                clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.clip_label), text))
+            } catch (_: Exception) {
+                failure = RocketError(getString(R.string.error_clipboard))
+            } finally { done.countDown() }
+        }) throw RocketError(getString(R.string.error_clipboard))
+        if (!done.await(10, TimeUnit.SECONDS)) {
+            pending.set(false) // A delayed UI runnable must not copy after the transfer has failed.
+            throw RocketError(getString(R.string.error_clipboard))
+        }
+        failure?.let { throw it }
     }
 
     private fun schedulePoll(delay: Long = 1000) {
@@ -684,6 +781,10 @@ class MainActivity : Activity(), LaunchView.Host, SettingsPanel.Host {
             else -> emptyList()
         }
         if (shared.isNotEmpty()) stageFiles(shared)
+        else if (intent.action == Intent.ACTION_SEND && intent.hasExtra(Intent.EXTRA_TEXT)) {
+            val message = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+            stageText(message) // Share stages a preview, never launches automatically.
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

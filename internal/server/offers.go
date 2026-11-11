@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -21,6 +22,33 @@ func (s Server) poll(conn net.Conn, req wire.Request) error {
 	response := wire.Response{OK: true, Offers: make([]wire.Offer, 0, len(items))}
 	for _, it := range items {
 		response.Offers = append(response.Offers, wire.Offer{ID: it.ID, Name: it.Name, Size: it.Size, Mtime: it.Mtime})
+	}
+	// Escaping can expand file names and 8192-byte texts considerably. Keep
+	// the oldest offers and texts first, never exceeding the frame limit.
+	frameSize := func() (int, error) {
+		frame, err := json.Marshal(response)
+		return len(frame), err
+	}
+	for {
+		n, err := frameSize()
+		if err != nil {
+			return err
+		}
+		if n <= wire.MaxHeader || len(response.Offers) == 0 {
+			break
+		}
+		response.Offers = response.Offers[:len(response.Offers)-1]
+	}
+	for _, it := range s.Outbox.Texts(req.Device) {
+		response.Texts = append(response.Texts, wire.Text{ID: it.ID, Text: it.Text})
+		n, err := frameSize()
+		if err != nil {
+			return err
+		}
+		if n > wire.MaxHeader {
+			response.Texts = response.Texts[:len(response.Texts)-1]
+			break
+		}
 	}
 	return wire.Write(conn, response)
 }
