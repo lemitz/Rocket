@@ -22,4 +22,4 @@ Windows may show a SmartScreen warning for an unsigned executable. **Android sig
 
 - Rocket deliberately has **no TLS, passwords or authentication**. On an untrusted network somebody can send text that overwrites your Windows clipboard or pretend to be the receiving phone. Only use Rocket on a LAN you trust; do not send secrets over public Wi-Fi.
 - If the PC cannot see the phone, keep Rocket open on the phone and check the PC's Private-network firewall rules in Settings (or run `rocket.exe firewall install` as administrator).
-- Message delivery and clipboard replacement have automated Go protocol tests and an Android build check, but have not yet been tested end-to-end on the user's physical devices for this release. A lost acknowledgement can cause a message to be copied again.
+- The user tested file and text transfers in both directions, including automatic clipboard copying, on real Windows PCs and Android phones and confirmed they work. Automated Go protocol tests and Android builds also pass. A lost acknowledgement can still cause a message to be copied again.

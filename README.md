@@ -55,6 +55,7 @@ It is two tiny apps, not a framework: a single Windows executable written in Go 
 - **PC → phone:** copy text in any Windows app, focus the Rocket main window and press **Ctrl+V**. A message preview appears; slide **Let's go!** to send it. The open phone receives it and automatically copies it to its clipboard for pasting elsewhere
 - **Phone → PC:** tap **Send text**, type or paste into the editor (or share text from another app), stage it and slide **Let's go!**. Rocket on the PC automatically copies it to the Windows clipboard
 - Text is not sent by merely copying or pasting: the sender must launch it. Messages are limited to 8192 UTF-8 bytes, live only in memory and aren't saved as files. Incoming text **replaces** the recipient's current clipboard. Android may show its own clipboard notification. Both apps must be updated for the new feature
+- The user tested file and text transfers in both directions, including automatic clipboard copying, on real Windows PCs and Android phones and confirmed they work
 
 **Finding each other**
 - No pairing and no IP addresses to type: the phone finds the PC on the network by itself, and the PC sees every phone that has Rocket open
