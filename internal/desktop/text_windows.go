@@ -152,28 +152,33 @@ var gammaLift = func() [256]uint8 {
 	return table
 }()
 
-// width is the advance of the unclipped text in pixels (without the mask padding).
+// width measures unclipped text without rasterizing/caching a glyph mask. In particular,
+// callers may ask for the width of long user-provided messages before they are truncated.
 func (t *textRenderer) width(s string, px, weight int) int {
-	if m := t.get(s, px, weight); m != nil {
-		return m.w - textPad*2 - 2
+	if s == "" || px < 4 || !t.ensure(1024, 96) {
+		return 0
 	}
-	return 0
+	text := syscall.StringToUTF16(s)
+	text = text[:len(text)-1] // drop the terminator
+	if len(text) == 0 {
+		return 0
+	}
+	font := t.font(fontKey{px, weight})
+	if font == 0 {
+		return 0
+	}
+	old, _, _ := selectObject.Call(t.dc, font)
+	defer selectObject.Call(t.dc, old)
+	var size struct{ cx, cy int32 }
+	getTextExtent.Call(t.dc, uintptr(unsafe.Pointer(&text[0])), uintptr(len(text)), uintptr(unsafe.Pointer(&size)))
+	return max(0, int(size.cx))
 }
 
-// fit shortens s with an ellipsis until it is no wider than max pixels.
+// fit shortens s with an ellipsis using logarithmic width measurements. Avoid rasterizing each
+// suffix: a pasted message near the protocol limit would otherwise do thousands of GDI renders
+// synchronously on the window thread and stall the app.
 func (t *textRenderer) fit(s string, max, px, weight int) string {
-	if t.width(s, px, weight) <= max {
-		return s
-	}
-	runes := []rune(s)
-	for len(runes) > 1 {
-		runes = runes[:len(runes)-1]
-		cand := string(runes) + "…"
-		if t.width(cand, px, weight) <= max {
-			return cand
-		}
-	}
-	return "…"
+	return fitText(s, max, func(candidate string) int { return t.width(candidate, px, weight) })
 }
 
 // wrap breaks s on spaces into at most maxLines lines no wider than max pixels.

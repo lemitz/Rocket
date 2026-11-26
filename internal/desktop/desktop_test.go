@@ -1,9 +1,36 @@
 package desktop
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestFitTextTruncatesUnicodeAndBoundsMeasurements(t *testing.T) {
+	calls := 0
+	width := func(s string) int {
+		calls++
+		return len([]rune(s))
+	}
+
+	got := fitText("ab你de🙂f", 5, width)
+	if got != "ab你d…" {
+		t.Fatalf("fitText() = %q; want %q", got, "ab你d…")
+	}
+	if calls > 6 {
+		t.Fatalf("fitText used %d measurements for a short string", calls)
+	}
+
+	calls = 0
+	long := strings.Repeat("x", 8192)
+	got = fitText(long, 40, width)
+	if got != strings.Repeat("x", 39)+"…" {
+		t.Fatalf("long fitText() has unexpected result length/content: len=%d", len(got))
+	}
+	if calls > 16 {
+		t.Fatalf("fitText used %d measurements for an 8 KiB string; want logarithmic work", calls)
+	}
+}
 
 func TestTransferLabels(t *testing.T) {
 	for _, tc := range []struct {

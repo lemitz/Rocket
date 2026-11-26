@@ -18,12 +18,26 @@ internal interface DownloadTarget {
     fun abort()
 }
 
+internal fun isSafeDownloadName(name: String): Boolean =
+    name.isNotEmpty() && name.length <= 200 && name != "." && name != ".." &&
+        name.none { it == '/' || it == '\\' || it.code < 32 || it.code == 127 }
+
+internal fun uniqueDownloadName(name: String, exists: (String) -> Boolean): String? {
+    val dot = name.lastIndexOf('.')
+    val stem = if (dot > 0) name.substring(0, dot) else name
+    val ext = if (dot > 0) name.substring(dot) else ""
+    for (index in 0..9999) {
+        val candidate = if (index == 0) name else "$stem ($index)$ext"
+        if (!exists(candidate)) return candidate
+    }
+    return null
+}
+
 internal class DownloadStore(private val context: Context, private val tree: Uri?) {
     private val resolver: ContentResolver = context.contentResolver
 
     fun create(name: String): DownloadTarget {
-        if (name.isEmpty() || name.length > 200 || name == "." || name == ".." ||
-            name.any { it == '/' || it == '\\' || it.code < 32 || it.code == 127 }) {
+        if (!isSafeDownloadName(name)) {
             throw RocketError(context.getString(R.string.error_unsafe_destination))
         }
         return if (tree == null) createMedia(name) else createDocument(tree, name)
@@ -34,16 +48,8 @@ internal class DownloadStore(private val context: Context, private val tree: Uri
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "application/octet-stream"
     }
 
-    private fun unique(name: String, exists: (String) -> Boolean): String {
-        val dot = name.lastIndexOf('.')
-        val stem = if (dot > 0) name.substring(0, dot) else name
-        val ext = if (dot > 0) name.substring(dot) else ""
-        for (index in 0..9999) {
-            val candidate = if (index == 0) name else "$stem ($index)$ext"
-            if (!exists(candidate)) return candidate
-        }
-        throw RocketError(context.getString(R.string.error_too_many_names))
-    }
+    private fun unique(name: String, exists: (String) -> Boolean): String =
+        uniqueDownloadName(name, exists) ?: throw RocketError(context.getString(R.string.error_too_many_names))
 
     private fun createMedia(name: String): DownloadTarget {
         val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
