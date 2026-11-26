@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/lemitz/Rocket/releases"><img src="https://img.shields.io/badge/version-0.3.0-8b8cff" alt="Version 0.3.0"></a>
+  <a href="https://github.com/lemitz/Rocket/releases"><img src="https://img.shields.io/badge/version-1.0.0-8b8cff" alt="Version 1.0.0"></a>
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-0078d4" alt="Windows 10 / 11 x64">
   <img src="https://img.shields.io/badge/platform-Android%2014%2B-3ddc84" alt="Android 14+">
   <img src="https://img.shields.io/badge/built%20with-Go%20%2B%20Kotlin-00add8" alt="Go and Kotlin">
@@ -95,11 +95,11 @@ Download the files from the [Releases](https://github.com/lemitz/Rocket/releases
 
 - **Windows:** `Rocket-<version>-win-x64.exe` - nothing to install. The first time Windows SmartScreen may warn about an unsigned app: *More info* → *Run anyway*. Windows 10 or 11, 64-bit.
 - **Android:** `Rocket-<version>-android.apk` - open it on the phone and allow installing from your browser or file manager. Android 14 or newer.
-- `SHA256SUMS.txt` - checksums. In PowerShell: `Get-FileHash .\Rocket-0.3.0-win-x64.exe -Algorithm SHA256`.
+- `SHA256SUMS.txt` - checksums. In PowerShell: `Get-FileHash .\Rocket-1.0.0-win-x64.exe -Algorithm SHA256`.
 
 **Windows firewall:** the PC has to accept connections from the phone. On first use open the gear and press **Fix** next to *Firewall* (Windows asks for permission once), or run `rocket.exe firewall install` from an administrator terminal. It opens TCP 42070 and UDP 42069 for the **Private** network profile and the local subnet only; Rocket never changes firewall rules on its own. Also check that the PC's network profile is *Private* and that the Wi-Fi has no client isolation.
 
-Rocket does not update itself. **The release APK is currently signed with an ephemeral CI debug key**, so v0.3.0 may not install over v0.2.0: Android may require uninstalling the older APK first (which removes saved Rocket PC/folder settings). Do not uninstall until you are ready to set them up again. See [Releasing](#releasing) for persistent signing.
+Rocket does not update itself. **The v1.0.0 release APK is signed with an ephemeral CI debug key, not a persistent release key**, so Android may refuse to install it over an existing Rocket APK signed with a different key. You may need to uninstall the old APK first; this removes saved Rocket PC and folder settings. Do not uninstall until you are ready to set them up again. See [Releasing](#releasing) for persistent signing.
 
 ## Development
 

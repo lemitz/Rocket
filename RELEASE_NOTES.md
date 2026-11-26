@@ -1,25 +1,30 @@
-# Rocket v0.3.0
+# Rocket v1.0.0
 
-Windows 10/11 x64 and Android 14+ release of Rocket. Alongside the existing file transfers, you can now send short text messages over your trusted local network and have the recipient automatically copy them to their clipboard.
+Rocket v1.0.0 is a Windows 10/11 x64 and Android 14+ app for direct file and short-text transfers over a trusted local network. Keep Rocket open on both devices while transferring.
 
-## Changes
+## What's included
 
-- **PC → phone text:** copy text, focus Rocket's main window and press **Ctrl+V**. Check the preview and slide **Let's go!**. The open Android app copies the message to its clipboard automatically. You still choose the destination phone when more than one is online.
-- **Phone → PC text:** tap **Send text** to type/paste a message, or share text from another Android app to Rocket. Slide **Let's go!**; the Windows app copies it to the system clipboard before acknowledging delivery. Copying, pasting, or sharing alone does **not** send anything.
-- Messages are limited to **8192 bytes of UTF-8** and aren't saved as files. PC → phone messages are held in memory until the phone receives and confirms them (or for up to 30 minutes). Receiving text **replaces the previous contents of the recipient's clipboard**. The phone must have Rocket open to receive.
-- **Windows result card fixes:** long message titles now wrap instead of being cut off, including in a narrow window and in Russian. The **OK** button on a received-message card now closes it instead of opening File Explorer; file-result cards retain their separate **Open folder** button.
-- Existing file transfer workflow and network roles are unchanged. Text and file events use separate session statistics. New commands are documented in `docs/PROTOCOL.md`; old builds do not support messages, so update both devices.
+- **File transfer in both directions:** send selected files from Android to Windows, or select/drag files on Windows for the open Android app to download. Transfers verify file contents and avoid overwriting existing files.
+- **Short text in both directions:** stage text on Windows with Ctrl+V in Rocket, or compose/share it on Android; slide to send. The receiving app copies it to the system clipboard. Text is limited to 8192 UTF-8 bytes and is not saved as a file.
+- **Long-text UI responsiveness:** fixed a UI responsiveness issue when working with long text messages.
+- Portable Windows executable and Android APK; no installer, account, cloud service, telemetry, or background service.
+
+## Requirements
+
+- **Windows:** Windows 10 or 11, 64-bit (x64).
+- **Android:** Android 14 or newer.
+- **To build from source:** Go 1.25+; Android builds also need JDK 21 and Android SDK API 36.
+
+## Important security and installation notes
+
+- Rocket has **no TLS, passwords, or authentication**. Anyone on a reachable local network may impersonate a device or send files/text that replaces the recipient's clipboard. Use Rocket only on a trusted private network; do not expose it to the internet or use it on public Wi-Fi.
+- The release APK is signed with an **ephemeral CI debug key** because no persistent release keystore is configured. Android may refuse to install v1.0.0 over an existing Rocket APK signed with a different key. Uninstalling the old app may be required and clears Rocket's saved PC and folder settings; back up or note those settings and do not uninstall until ready to configure again.
+- Windows SmartScreen may warn that the portable executable is unsigned.
 
 ## Downloads
 
-- `Rocket-0.3.0-win-x64.exe` — portable Windows executable.
-- `Rocket-0.3.0-android.apk` — Android 14+ app.
-- `SHA256SUMS.txt` — checksums. In PowerShell: `Get-FileHash .\Rocket-0.3.0-win-x64.exe -Algorithm SHA256`.
+- `Rocket-1.0.0-win-x64.exe` — portable Windows executable.
+- `Rocket-1.0.0-android.apk` — Android app.
+- `SHA256SUMS.txt` — checksums. In PowerShell: `Get-FileHash .\Rocket-1.0.0-win-x64.exe -Algorithm SHA256`.
 
-Windows may show a SmartScreen warning for an unsigned executable. **Android signing:** no persistent release keystore is configured in the repository yet. CI signs the release APK with an ephemeral debug key; it may **not** install over v0.2.0 or a locally built APK. If Android rejects the update, backing up your settings/selected destination and uninstalling the old APK is necessary before installing this one. Uninstalling clears Rocket's saved PC and folder settings. Do not uninstall a working installation until you are ready to set it up again.
-
-## Good to know
-
-- Rocket deliberately has **no TLS, passwords or authentication**. On an untrusted network somebody can send text that overwrites your Windows clipboard or pretend to be the receiving phone. Only use Rocket on a LAN you trust; do not send secrets over public Wi-Fi.
-- If the PC cannot see the phone, keep Rocket open on the phone and check the PC's Private-network firewall rules in Settings (or run `rocket.exe firewall install` as administrator).
-- The user tested file and text transfers in both directions, including automatic clipboard copying, on real Windows PCs and Android phones and confirmed they work. Automated Go protocol tests and Android builds also pass. A lost acknowledgement can still cause a message to be copied again.
+For Windows connectivity, allow Rocket on the Private network profile and check that Wi-Fi client isolation is disabled. See `README.md` and `SECURITY.md` for usage and security details.
